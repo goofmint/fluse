@@ -1,11 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:fluse_builder/fluse_builder.dart';
 import 'package:fluse_server/testing.dart';
 import 'package:path/path.dart' as p;
-import 'package:process/process.dart';
 import 'package:test/test.dart';
 
 /// Flutter 3.41.9 の `flutter --version --machine` を模した出力。
@@ -77,12 +75,28 @@ void main() {
   }
 
   /// `flutter --version --machine` の応答を登録する。
-  void registerVersion(String executable, {String stdout = _machineJson}) {
-    processManager.registerRun(<String>[
-      executable,
-      '--version',
-      '--machine',
-    ], ProcessResult(1, 0, stdout, ''));
+  ///
+  /// 実装は `start` でプロセスを起動するため、`FakeProcess` に出力を
+  /// 仕込んでから終了させる。`FakeProcess` のストリームは単一購読で
+  /// バッファされるので、購読前に流しても失われない。
+  void registerVersion(
+    String executable, {
+    String stdout = _machineJson,
+    String stderr = '',
+    int exitCode = 0,
+  }) {
+    processManager.registerStart(
+      <String>[executable, '--version', '--machine'],
+      processFactory: () {
+        final FakeProcess process = FakeProcess();
+        process.emitStdout(stdout);
+        if (stderr.isNotEmpty) {
+          process.emitStderr(stderr);
+        }
+        unawaited(process.complete(exitCode));
+        return process;
+      },
+    );
   }
 
   setUp(() {
@@ -324,15 +338,25 @@ void main() {
   });
 
   group('flutter --version のタイムアウト', () {
-    test('応答が返らなければタイムアウトで失敗する', () async {
+    /// テストを待たせすぎない範囲で、確実にタイムアウトさせる長さ。
+    const Duration shortTimeout = Duration(milliseconds: 20);
+
+    test('応答が返らなければタイムアウトで失敗し、プロセスを kill する', () async {
       createSdkTree(root: sdkRoot);
+      // 終了しないプロセスを返す。放置するとロックを掴んだまま残るため、
+      // タイムアウト時に kill されることまで確認する。
+      final FakeProcess hanging = processManager.registerStart(<String>[
+        flutterExecutable,
+        '--version',
+        '--machine',
+      ]);
 
       await expectLater(
         FlutterSdk.resolve(
           explicitRoot: sdkRoot,
-          processManager: _NeverRespondingProcessManager(),
+          processManager: processManager,
           environment: <String, String>{},
-          versionTimeout: const Duration(milliseconds: 20),
+          versionTimeout: shortTimeout,
         ),
         throwsA(
           isA<SdkNotFoundException>().having(
@@ -342,6 +366,8 @@ void main() {
           ),
         ),
       );
+
+      expect(hanging.signals, <ProcessSignal>[ProcessSignal.sigterm]);
     });
   });
 
@@ -524,11 +550,12 @@ void main() {
   group('flutter --version の失敗', () {
     test('終了コードが非ゼロなら stderr を添えて失敗する', () async {
       createSdkTree(root: sdkRoot);
-      processManager.registerRun(<String>[
+      registerVersion(
         flutterExecutable,
-        '--version',
-        '--machine',
-      ], ProcessResult(1, 1, '', 'Flutter SDK is broken'));
+        stdout: '',
+        stderr: 'Flutter SDK is broken',
+        exitCode: 1,
+      );
 
       await expectLater(
         FlutterSdk.resolve(
@@ -623,45 +650,4 @@ void main() {
     expect(Directory(sdk.patchedSdkRoot).existsSync(), isTrue);
     expect(File(sdk.flutterExecutable).existsSync(), isTrue);
   }, timeout: const Timeout(Duration(minutes: 2)));
-}
-
-/// `run` が永遠に完了しない [ProcessManager]。タイムアウトの検証に使う。
-final class _NeverRespondingProcessManager implements ProcessManager {
-  @override
-  Future<ProcessResult> run(
-    List<Object> command, {
-    String? workingDirectory,
-    Map<String, String>? environment,
-    bool includeParentEnvironment = true,
-    bool runInShell = false,
-    Encoding? stdoutEncoding = systemEncoding,
-    Encoding? stderrEncoding = systemEncoding,
-  }) => Completer<ProcessResult>().future;
-
-  @override
-  Future<Process> start(
-    List<Object> command, {
-    String? workingDirectory,
-    Map<String, String>? environment,
-    bool includeParentEnvironment = true,
-    bool runInShell = false,
-    ProcessStartMode mode = ProcessStartMode.normal,
-  }) => Completer<Process>().future;
-
-  @override
-  ProcessResult runSync(
-    List<Object> command, {
-    String? workingDirectory,
-    Map<String, String>? environment,
-    bool includeParentEnvironment = true,
-    bool runInShell = false,
-    Encoding? stdoutEncoding = systemEncoding,
-    Encoding? stderrEncoding = systemEncoding,
-  }) => throw UnimplementedError();
-
-  @override
-  bool canRun(Object? executable, {String? workingDirectory}) => true;
-
-  @override
-  bool killPid(int pid, [ProcessSignal signal = ProcessSignal.sigterm]) => true;
 }

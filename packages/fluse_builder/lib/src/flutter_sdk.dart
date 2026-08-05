@@ -255,9 +255,11 @@ final class FlutterSdk {
 
     final ProcessResult result;
     try {
-      result = await processManager
-          .run(<String>[executable, '--version', '--machine'])
-          .timeout(timeout);
+      result = await _runWithTimeout(
+        processManager: processManager,
+        command: <String>[executable, '--version', '--machine'],
+        timeout: timeout,
+      );
     } on TimeoutException {
       throw SdkNotFoundException.versionUnavailable(
         root: root,
@@ -280,6 +282,46 @@ final class FlutterSdk {
     }
 
     return _parseVersion(root: root, stdout: '${result.stdout}');
+  }
+
+  /// プロセスを起動し、[timeout] 内に終わらなければ kill してから
+  /// [TimeoutException] を投げる。
+  ///
+  /// `ProcessManager.run` に `Future.timeout` を掛けるだけでは、待つのを
+  /// やめるだけでプロセスは残る。`flutter` は SDK のダウンロードや gradle の
+  /// 起動を伴い、pub キャッシュのロックを掴んだまま残ると後続の操作が
+  /// 巻き添えで止まるため、確実に落とす。
+  static Future<ProcessResult> _runWithTimeout({
+    required ProcessManager processManager,
+    required List<String> command,
+    required Duration timeout,
+  }) async {
+    final Process process = await processManager.start(command);
+    final Future<String> stdoutText = process.stdout
+        .transform(utf8.decoder)
+        .join();
+    final Future<String> stderrText = process.stderr
+        .transform(utf8.decoder)
+        .join();
+
+    final int exitCode;
+    try {
+      exitCode = await process.exitCode.timeout(timeout);
+    } on TimeoutException {
+      process.kill();
+      // kill 後にストリームが閉じても誰も待たないため、未処理エラーに
+      // ならないよう捨てておく。
+      unawaited(stdoutText.catchError((Object _) => ''));
+      unawaited(stderrText.catchError((Object _) => ''));
+      rethrow;
+    }
+
+    return ProcessResult(
+      process.pid,
+      exitCode,
+      await stdoutText,
+      await stderrText,
+    );
   }
 
   /// `flutter --version --machine` の JSON を読む。
