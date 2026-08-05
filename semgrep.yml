@@ -1,0 +1,54 @@
+# CodeRabbit の Semgrep 連携用ルール。
+#
+# Semgrep の Dart 構文解析サポートは限定的で、`languages: [dart]` を指定したルールは
+# 環境によっては解析されない。ここではパーサに依存しない正規表現ルールのみで構成し、
+# fluse 固有のリスク（外部プロセス実行・keystore secret・例外の握りつぶし）に絞る。
+#
+# 正規表現ベースのため、コメントや文字列中の記述にも反応しうる。誤検知が続く箇所は
+# `// nosemgrep: <rule-id>` を該当行に付けて抑止すること。
+
+rules:
+  - id: fluse-dart-run-in-shell
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - "*.dart"
+    pattern-regex: 'runInShell\s*:\s*true'
+    message: >-
+      外部コマンドをシェル経由で実行している。引数がユーザー入力・プロジェクトパス・
+      デバイス ID などに由来する場合、コマンドインジェクションの経路になる。
+      runInShell は使わず、実行ファイル名と引数リストを分けて Process.run /
+      Process.start に渡すこと。
+
+  - id: fluse-dart-hardcoded-secret
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "*.dart"
+      exclude:
+        # トークンのマスク処理（redact）のテストは、トークンの形をした
+        # リテラルを持つことが仕様そのものであり、除外しないと恒常的に
+        # 赤くなる。恒常的な誤検知はルール全体を無視させるため避ける。
+        # テスト以外に直書きされた値は引き続き検出する。
+        - "*_test.dart"
+    # キー名は裸（`apiKey: 'x'`）でも引用符付き（`{'apiKey': 'x'}`）でも拾う。
+    # Map リテラルではキーが引用されるため、裸のみだと取りこぼす。
+    pattern-regex: '(?i)[''"]?(keystore_?password|store_?password|key_?password|api_?key|auth_?token|access_?token|device_?token|pairing_?token|token|secret)[''"]?\s*[:=]\s*[''"][^''"\n]{4,}[''"]'
+    message: >-
+      機密情報とみられる値がソースに直書きされている。keystore パスワード・トークン・
+      API キーは環境変数か利用者が指定する設定から読み込み、リポジトリには含めないこと
+      （設計 §9.2）。テスト用のダミー値であっても実在の鍵と紛らわしい形式は避けること。
+
+  - id: fluse-dart-empty-catch
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - "*.dart"
+    pattern-regex: 'catch\s*\([^)]*\)\s*\{\s*\}'
+    message: >-
+      例外を握りつぶしている。空の catch は障害の原因を利用者にもログにも残さない。
+      再送出するか、呼び出し元が判断できるエラー型に変換すること。
+      意図的に無視する場合は理由をコメントで明記すること。
