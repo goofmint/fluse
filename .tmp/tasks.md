@@ -12,6 +12,19 @@
 
 1. **最大の未知＝反映経路（frontend_server → DevFS → reloadSources → reassemble）を最初に潰す。**
    Phase 1 のスパイクは `adb forward` を使い、トンネル・WebSocket・Runtime を一切作らずに実機 Hot Reload を成立させる。ここが通らなければ設計を見直すため、**Task 1.6 を GO/NO-GO ゲートとする**。
+
+   ただし**このゲートが証明する範囲は「反映経路の実現性」に限られる**。`adb forward` で
+   VM Service に直結するため、以下は Task 1.6 では一切検証されない。
+
+   | 検証される | 検証されない |
+   |---|---|
+   | `frontend_server` の差分 dill 生成 | `TunnelEndpoint` / `FluseTunnel`（WS binary 中継） |
+   | DevFS への PUT と `reloadSources` | 認証・ペアリング・再接続（`FluseConnection`） |
+   | ビルドフラグ整合性（`build_meta`） | LAN 経由のスループットとレイテンシ |
+   | `reassemble` による画面反映 | Runtime の常駐性・Hot Restart 耐性 |
+
+   トンネル経路の実現性は **Task 2.5（L1統合テスト）を第2のゲート**として検証する。ここで
+   10MB双方向転送のスループットが要求を満たさなければ、フレーム設計を見直す。
 2. 各タスクは 1–4時間のコミット単位。テストは各タスクに内包し、最後にまとめない。
 3. `fluse_protocol` を早期に確定させ、Dart側（Phase 3）と Kotlin側（Phase 4）を並行可能にする。
 
@@ -214,11 +227,16 @@
 
 #### Task 3.3: FileWatcher の実装
 
-- [ ] `package:watcher` で `lib/` と asset ディレクトリを監視
+- [ ] `package:watcher` で `lib/` と asset ディレクトリを監視（Hot Reload 対象）
+- [ ] **指紋対象（設計 §2.2.2 のテーブル）も全て監視対象に含める**。`lib/` と asset だけでは
+      `APP_OUTDATED` を検出できない。具体的には `pubspec.lock` / `pubspec.yaml` /
+      `.flutter-plugins-dependencies` / `android/app/src/*/AndroidManifest.xml` /
+      `android/**/*.gradle{,.kts}` / `gradle.properties` / `gradle-wrapper.properties` /
+      `android/app/src/main/{java,kotlin,jni,res}/**`
 - [ ] debounce 50ms（設計 §8.2-3、エディタの atomic write 対策）
 - [ ] 変更ファイルの分類（Dartソース / asset / 指紋対象）
 - [ ] 指紋対象の変更を検出したら Watch を停止し `APP_OUTDATED` を通知
-- **完了条件**: atomic write を模した create/delete/modify の連発が1イベントに畳まれるテストが通る
+- **完了条件**: atomic write を模した create/delete/modify の連発が1イベントに畳まれるテストが通る。**指紋対象の各ルート（`pubspec.lock` / Manifest / Gradle / native ソース）について、変更が `APP_OUTDATED` を発火させるテストが個別に通る**
 - **依存**: Task 0.3
 - **推定時間**: 3h
 
@@ -405,19 +423,19 @@
 - [ ] Fingerprint と build_meta の保存
 - [ ] 進捗表示と各段の失敗時の明確なエラー
 - **完了条件**: 素のサンプルアプリに対し `fluse init` 一発で実機に Preview App がインストールされる
-- **依存**: Task 5.2, Task 5.6, Task 5.7
+- **依存**: Task 5.2, Task 5.6, Task 5.7, **Task 4.1**（`fluse_runtime` を `dev_dependencies` に注入してビルドするため、パッケージが解決可能である必要がある）, **Task 4.6**（debug マニフェストが無いと cleartext で接続できない APK ができあがる）
 - **推定時間**: 4h
 
 #### Task 5.9: `fluse start` コマンドと QR 表示の実装
 
 - [ ] LAN IP の自動検出（複数NIC時は選択またはリスト表示）
 - [ ] `package:qr` によるコンソール QR 描画（設計 §4.2(a) のペイロード）
-- [ ] pairingToken の平文表示（手入力導線用）
+- [ ] pairingToken の平文表示（手入力導線用。設計 §2.2.3 の制約に従い、ログファイルには残さない）
 - [ ] サーバ起動 → 接続待ち → 接続後のステータス表示
 - [ ] キー入力（`r` 手動リロード / `q` 終了）
 - [ ] 起動時の指紋照合と `APP_OUTDATED` 表示
 - **完了条件**: `fluse start` で QR が表示され、実機からスキャンして接続できる
-- **依存**: Task 3.5, Task 5.7
+- **依存**: Task 3.5, Task 5.7, **Task 4.4**（QRスキャンによる接続が完了条件に含まれるため、端末側の接続画面が必要）
 - **推定時間**: 4h
 
 #### Task 5.10: `fluse rebuild` / `doctor` / `devices` の実装
@@ -459,7 +477,7 @@
 - [ ] シナリオ: 署名衝突の3択
 - [ ] シナリオ: `pubspec.lock` 変更 → `APP_OUTDATED` → `rebuild`
 - **完了条件**: 全シナリオが実機で成功する
-- **依存**: Task 5.10, Task 4.6
+- **依存**: Task 5.10, Task 4.6, **Task 4.5**（「コンパイルエラー → 復旧」シナリオがエラーオーバーレイの表示・解除を検証対象にするため）
 - **推定時間**: 6h
 
 #### Task 6.4: 性能計測と最適化
@@ -479,7 +497,7 @@
 
 - [ ] ルート `README.md`（コンセプト / インストール / クイックスタート）
 - [ ] **平文WebSocketのリスクを明記**（設計 §6.1、信頼できるLAN前提であること）
-- [ ] Phase1 のスコープ外（iOS / Hot Restart / マルチデバイス / TLS）を明記
+- [ ] Phase1 のスコープ外（iOS / **`fluse` による能動的な Hot Restart トリガ** / マルチデバイス / TLS）を明記。IDE 等ユーザー操作による Hot Restart 後の接続維持は Phase1 のスコープ**内**である旨もあわせて書く（設計 §10-6）
 - [ ] 各パッケージの `README.md` と `CHANGELOG.md`
 - [ ] トラブルシューティング（署名衝突 / cleartext / APP_OUTDATED）
 - **完了条件**: 未経験者が README だけで実機に接続できる
@@ -512,8 +530,9 @@
 
 ### クリティカルパス
 
-以下の図は**各タスクの「依存」欄をそのまま辺にしたもの**であり、作業順の推奨ではない。
-矢印が無いタスク同士は並行に着手してよい（推奨順は後述の2節を参照）。
+以下の図は**クリティカルパス上のタスクとその依存関係だけを抜き出したもの**であり、
+全依存の網羅ではない。各タスクの完全な依存は上の「依存」欄が正である。
+また作業順の推奨でもない — 矢印が無いタスク同士は並行に着手してよい（推奨順は後述の2節）。
 
 ゲートまで（Task 1.6 が GO/NO-GO の判断点）:
 
@@ -547,6 +566,12 @@ graph LR
   T58 --> T510
   T510 --> T63["6.3 E2E 実機検証"]
   T41["4.1 fluse_runtime 雛形"] --> T46["4.6 debug マニフェスト"]
+  T41 --> T58
+  T46 --> T58
+  T43["4.3 FluseConnection"] --> T44["4.4 FluseConnectActivity"]
+  T43 --> T45["4.5 エラーオーバーレイ"]
+  T44 --> T59
+  T45 --> T63
   T46 --> T63
   T63 --> T64["6.4 性能計測"]
 ```
@@ -561,21 +586,28 @@ Task 1.6 通過後、以下の3系統は独立して進行できる。
 |---|---|---|
 | A: サーバ | 2.1 → 2.2 → 3.1 → 3.2 → 3.3 → 3.4 → 3.5 → 3.6 | Dart |
 | B: Runtime | 2.1 → 2.3 → 2.4 → 4.1 → 4.2 → 4.3 → 4.4 → 4.5 → 4.6 | Kotlin |
-| C: Builder/CLI | 5.1 → 5.2 → 5.3 → 5.4 → 5.5 → 5.6 → 5.7 → 5.8 | Dart |
+| C: Builder/CLI | 5.1 → 5.2 → 5.3 → 5.4 → 5.5 → 5.6 → 5.7 | Dart |
 
-合流点は Task 2.5（トンネル結合）、Task 5.9（start コマンド）、Task 6.3（E2E）。
+各行は**その系統を1人で担当する場合の推奨作業順**であり、依存関係ではない。
+系統内でも依存の無いタスクは並行に進めてよい（例: 3.3 の依存は 0.3、3.4 の依存は 1.3 だけで、
+3.2 の完了を待つ必要はない）。
+
+合流点は Task 2.5（トンネル結合）、**Task 5.8**（`init` — 系統B の 4.1 / 4.6 を要する）、
+Task 5.9（`start` — 系統A の 3.5 と系統B の 4.4 を要する）、Task 6.3（E2E）。
 
 ### 推奨する実行順（単独作業の場合）
 
 1. **Phase 0**（3タスク / 5h） — 基盤
 2. **Phase 1**（6タスク / 21h） — 🚩スパイクで設計を証明
 3. **Phase 2**（5タスク / 17h） — トンネルを独立して完成させる
-4. **Phase 5.1–5.8**（8タスク / 27h） — `fluse init` を先に完成させ、以降の検証を実機で回せるようにする
-5. **Phase 4**（6タスク / 21h） — Runtime
-6. **Phase 3**（6タスク / 22h） — サーバ本体
-7. **Phase 5.9–5.10**（2タスク / 7h） — `start` で全体を接続
-8. **Phase 6**（4タスク / 17h） — 検証
-9. **Phase 7**（3タスク / 10h） — 仕上げ
+4. **Phase 5.1–5.7**（7タスク / 23h） — Builder と CLI 基盤
+5. **Phase 4**（6タスク / 21h） — Runtime。`fluse init` が `fluse_runtime` を注入して
+   ビルドするため、**4.1 と 4.6 は 5.8 より先**に必要になる
+6. **Task 5.8**（1タスク / 4h） — `fluse init` を完成させ、以降の検証を実機で回せるようにする
+7. **Phase 3**（6タスク / 22h） — サーバ本体
+8. **Phase 5.9–5.10**（2タスク / 7h） — `start` で全体を接続
+9. **Phase 6**（4タスク / 17h） — 検証
+10. **Phase 7**（3タスク / 10h） — 仕上げ
 
 ---
 

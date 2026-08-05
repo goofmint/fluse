@@ -19,7 +19,8 @@ dev_dependencies:
   melos: ^8.2.2
 
 melos:
-  name: fluse
+  # ワークスペース名はルートパッケージの `name`（fluse_workspace）を使う。
+  # melos.name を別に持つと表示名が二重管理になるため定義しない。
 
   scripts:
     analyze:

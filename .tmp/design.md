@@ -153,8 +153,25 @@ final class CompileErrorMessage extends FluseMessage {// type: 'compileError'
   final List<DiagnosticEntry> diagnostics;
 }
 final class CompileOkMessage extends FluseMessage {}  // type: 'compileOk' (オーバーレイ解除)
-final class PingMessage / PongMessage / CloseMessage
+// 双方向（keepalive）
+final class PingMessage extends FluseMessage {        // type: 'ping'
+  final int seq;                // 対応する pong と突き合わせる
+  final int timestampMs;        // 送信側の時刻（RTT 計測用）
+}
+final class PongMessage extends FluseMessage {        // type: 'pong'
+  final int seq;                // 受信した ping の seq をそのまま返す
+  final int timestampMs;        // ping の timestampMs をそのまま返す
+}
+
+// 双方向（正常終了の通知。異常終了は WebSocket の close フレームに委ねる）
+final class CloseMessage extends FluseMessage {       // type: 'close'
+  final String code;            // SHUTDOWN | SESSION_REPLACED | CLIENT_EXIT
+  final String? message;
+}
 ```
+
+`ping` は `AcceptMessage.heartbeatIntervalMs` の間隔でサーバから送出し、端末は同じ
+`seq` / `timestampMs` を載せた `pong` を返す。2回連続で応答が無ければ切断とみなす。
 
 ```dart
 /// トンネルフレーム（WebSocket binary frame）
@@ -264,7 +281,16 @@ class DeviceInstaller {
 import 'package:fluse_runtime/fluse_runtime.dart';
 import 'package:<packageName>/main.dart' as app;   // userTarget から解決
 
-void main() => flusePreviewMain(app.main);
+Future<void> main() => flusePreviewMain(app.main);
+```
+
+ユーザーの `main()` は `Future<void> main() async` である場合があるため、
+`flusePreviewMain` のシグネチャは以下とし、`appMain()` の完了を待ってから
+VM Service URI を通知する。生成する `main()` も `Future<void>` を返し、
+アプリ側の完了とエラーを呼び出し元へ伝播させる。
+
+```dart
+Future<void> flusePreviewMain(FutureOr<void> Function() appMain);
 ```
 
 `userTarget` が `lib/` 配下なら `package:` URI に、外なら絶対 `file:` URI に解決する。
@@ -380,7 +406,15 @@ class SessionManager {
 }
 ```
 
-- `pairingToken`: 32バイト乱数（`Random.secure()`）を base64url 化。QRにのみ載る。
+- `pairingToken`: 32バイト乱数（`Random.secure()`）を base64url 化。
+  **公開経路は QR / コンソール表示 / HTTP `/` の3つ**（QR を読めない端末のための手入力導線を
+  要件として持つため。§2.2.5 の `FluseConnectActivity` と Task 5.9 を参照）。
+  ただし以下を制約とする。
+  - **ログファイルには絶対に出力しない**（§6.1 の `redact()` 対象）。コンソールは
+    `fluse start` の対話表示のみで、`.flutter_preview/logs/` には残さない。
+  - HTTP `/` は LAN 上の誰でも到達できるため、`start` のセッション中のみ有効な値を返し、
+    セッション終了時に失効させる。
+  - ペアリング成立後は即座に失効させ、以後は `deviceToken` に切り替える（単回利用）。
 - `deviceToken`: ペアリング成立時にサーバが発行し、端末は EncryptedSharedPreferences に保存。以後は QR 再スキャン不要。
 - 検証は定数時間比較を用いる。
 
@@ -552,7 +586,7 @@ fluse://connect?v=1&h=192.168.0.10&p=8180&pid=<projectId>&t=<pairingToken>&rev=0
 | メソッド | パス | 用途 |
 |---|---|---|
 | `GET` | `/` | インストール案内HTML（APKリンク + 手入力用トークン表示） |
-| `GET` | `/apk` | `preview.apk` を `application/vnd.android.package-archive` で配信 |
+| `GET` | `/apk?t=<pairingToken>` | `preview.apk` を `application/vnd.android.package-archive` で配信。**`t` が現行 `pairingToken` と一致しない場合は 404** |
 | `GET` | `/ws` | WebSocket アップグレード |
 | `GET` | `/health` | 疎通確認（`doctor` 用） |
 
@@ -622,20 +656,38 @@ fluse://connect?v=1&h=192.168.0.10&p=8180&pid=<projectId>&t=<pairingToken>&rev=0
 
 | 層 | 対策 |
 |---|---|
-| ペアリング | `pairingToken`(32バイト乱数, TTL 10分, 1回限り)。QRにのみ載せ、コンソールにも平文表示（手入力導線用） |
+| ペアリング | `pairingToken`(32バイト乱数, TTL 10分, 1回限り)。QR / コンソール / HTTP `/` に平文表示（手入力導線用。§2.2.3 の制約を参照） |
 | 再接続 | サーバ発行の `deviceToken` を端末の EncryptedSharedPreferences に保存。`.flutter_preview/devices.json` と突合 |
 | バインド | WebSocket/HTTP は既定でプライベートIPにのみバインド。`--host 0.0.0.0` は明示指定時のみ、かつ警告を出す |
 | トンネル | 認証済みセッションのみが `vmServiceReady` を送れる。未認証接続からのトンネルフレームは即切断 |
 | 比較 | トークン比較は定数時間 |
 | ログ | トークンは常にマスク（先頭4文字 + `***`） |
 
-**Phase1で受け入れるリスク（明示）**: 通信は平文 WebSocket。LAN上の受動的盗聴者はソースを閲覧できる。開発用途かつ信頼できるネットワーク前提とし、README に明記する。TLS化は Phase3。
+**Phase1で受け入れるリスク（明示・意図的な設計判断）**:
+
+通信は平文 WebSocket であり、TLS もサーバ認証も持たない（§0 / §10-10）。したがって以下を受け入れる。
+
+- LAN上の**受動的盗聴者はソースを閲覧できる**。
+- `hello` で送る `pairingToken` / `deviceToken` も**平文で流れるため盗聴・再利用されうる**。
+  `deviceToken` は永続トークンであり、盗まれれば以後のセッションにも接続できる。
+- 能動的な攻撃者は**中間者としてトンネルを乗っ取り、任意の Dart コードを流し込める**。
+
+この受容は「開発用途・信頼できるLAN・開発者本人の端末のみ」という前提に立つ。前提を守るための
+緩和策として、**既定でプライベートIPにのみバインドし**、`--host 0.0.0.0` は明示指定かつ警告付き
+とする。前提が成り立たない環境（カフェ / 共用オフィス / ゲストWi-Fi）での利用は非推奨であり、
+README（Task 7.1）に明記する。
+
+TLS とサーバ認証の導入は Phase3。Phase3 まで `deviceToken` の永続化をやめるべきかは
+別途判断する（やめると毎回QRスキャンが必要になり、本ツールの価値を大きく損なうため、
+現時点では利便性を優先する）。
 
 ### 6.2 データ保護
 
 - `.flutter_preview/` 全体を `fluse init` が `.gitignore` に追記する（`secret` / `devices.json` / `keystore/` を含むため必須）。
 - keystore のパスワードは `.flutter_preview/keystore/keystore.json` に保存（600 パーミッション）。debug 専用であり、配布物の署名には使わない。
-- APK の HTTP 配信は認証をかけない（インストール前の端末はトークンを持てないため）。APK にソースは含まれるため、`--no-serve-apk` で無効化できるようにする。
+- APK には Dart ソース（kernel_blob.bin）が含まれるため、HTTP 配信は `/apk?t=<pairingToken>` として現行トークンとの一致を要求し、不一致は 404 を返す。トークンは案内ページ `/` が生成するリンクに埋め込むため、利用者が手で入力する必要はない。これは「インストール前の**アプリ**はトークンを持てない」が「案内ページを開く**ブラウザ**は持てる」ことを利用している。
+  - ただし `/` 自体は認証されないため、これは総当たり／ポートスキャン程度の相手を弾く措置にすぎない。実効的な境界はプライベートIPへのバインドであり、§6.1 の受容リスクは変わらない。
+  - `serveApk: false`（`--no-serve-apk`）で配信そのものを無効化できる。既定は `true`（adb 不在時の唯一のインストール導線であるため）。
 
 ---
 
