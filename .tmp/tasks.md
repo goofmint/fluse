@@ -2,7 +2,7 @@
 
 ## 概要
 
-- **総タスク数**: 38
+- **総タスク数**: 43
 - **推定作業時間**: 約 150–180時間（20–24人日）
 - **優先度**: 高
 - **前提**: `.tmp/requirements.md` v0.2 / `.tmp/design.md`
@@ -23,12 +23,12 @@
 
 #### Task 0.1: melos モノレポ雛形の作成
 
-- [ ] ルート `pubspec.yaml` + `melos.yaml` を作成
-- [ ] `packages/fluse_protocol` / `fluse_builder` / `fluse_server` / `fluse_cli` / `fluse_runtime` の空パッケージを生成
+- [ ] ルート `pubspec.yaml` に `workspace` と `melos` を定義（Melos 7 以降は `melos.yaml` 廃止・pub workspaces 統合）
+- [ ] `packages/fluse_protocol` / `fluse_builder` / `fluse_server` / `fluse_cli` / `fluse_runtime` の空パッケージを生成し、各々に `resolution: workspace` を設定
 - [ ] 各パッケージの `analysis_options.yaml` を共通化（`package:lints/recommended.yaml` + 独自ルール）
 - [ ] `melos bootstrap` / `melos run analyze` / `melos run test` スクリプトを定義
-- [ ] `.gitignore` を整備（`.dart_tool/`, `.flutter_preview/`, `build/`）
-- **完了条件**: `melos bootstrap && melos run analyze` が全パッケージで警告0で通る
+- [ ] `.gitignore` を整備（`.dart_tool/`, `.flutter_preview/`, `build/`。ルート `pubspec.lock` は追跡する）
+- **完了条件**: ルート `pubspec.yaml` の `workspace` + `melos` 構成で `melos bootstrap && melos run analyze` が全パッケージで警告0で通る
 - **依存**: なし
 - **推定時間**: 2h
 
@@ -512,7 +512,7 @@
 
 ### クリティカルパス
 
-```
+```text
 0.1 → 1.1 → 1.2 → 1.4 → 1.6 🚩GO/NO-GO
                 ↗ 1.3
                 ↗ 1.5

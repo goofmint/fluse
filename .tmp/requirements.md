@@ -1,5 +1,19 @@
 # Flutter Preview Client 基本設計書 v0.2
 
+> **この文書は要件定義時点のスナップショットであり、現行仕様ではない。**
+> 実装が従う契約は `.tmp/design.md` である。詳細設計の過程で以下が確定・変更されており、
+> 本文書中の記述はいずれも変更前のものが残っている（`.tmp/design.md` §0 に一覧がある）。
+>
+> | 項目 | 本文書（v0.2） | 現行仕様（design.md） |
+> |---|---|---|
+> | CLI 名 | `flutter preview` | `fluse` |
+> | パッケージ名 | `preview_*` | `fluse_*` |
+> | QR ペイロード | `preview://` | `fluse://connect?...` |
+> | Flutter SDK | 取得する | 既存 SDK を解決する |
+> | コンパイラ | flutter_tools を利用 | `frontend_server` を直接起動 |
+>
+> 差分の理由は `.tmp/design.md` §0 を参照。本文書は履歴として凍結し、更新しない。
+
 ## 1. 概要
 
 ### 目的
@@ -104,13 +118,13 @@ Preview Appはプロジェクト専用に生成される。
 
 CLI名
 
-```
+```text
 flutter preview
 ```
 
 サブコマンド
 
-```
+```text
 flutter preview init
 flutter preview start
 flutter preview doctor
@@ -157,13 +171,13 @@ Preview Appを再生成する。
 
 サーバー起動時
 
-```
+```text
 flutter preview start
 ```
 
 コンソールへ表示
 
-```
+```text
 ██████████████
 ██ ▄▄▄▄▄ ██
 ██ █   █ ██
@@ -173,7 +187,7 @@ flutter preview start
 
 QRコード内容
 
-```
+```text
 preview://
 
 host=192.168.0.10
@@ -312,7 +326,7 @@ Preview CLIは自動検知する。
 
 以下を表示する。
 
-```
+```text
 Preview App is outdated.
 
 Run:
@@ -342,7 +356,7 @@ Preview App自体が対象SDKで生成されるためである。
 
 ## 12. ディレクトリ構成
 
-```
+```text
 .flutter_preview/
 
 preview/
@@ -359,7 +373,7 @@ server/
 
 生成物
 
-```
+```text
 .flutter_preview/
 
 preview_app/
@@ -471,7 +485,7 @@ Client
 
 ## 18. OSS構成
 
-```
+```text
 packages/
 
 preview_cli/

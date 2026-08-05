@@ -4,9 +4,10 @@
 build/
 doc/api/
 
-# pub workspaces ではロックファイルはルートに1つだけ生成される。
-# 全パッケージが pub.dev 公開ライブラリのためコミットしない。
-pubspec.lock
+# pub workspaces ではロックファイルはルートに1つだけ生成され、
+# 全メンバーの解決結果を保持する。環境間で解決を再現するためコミットする。
+# メンバー配下に紛れ込んだ pubspec.lock は pub が削除するので無視でよい。
+packages/*/pubspec.lock
 
 # Melos 6 以前が生成する残骸（移行時の取りこぼし対策）
 pubspec_overrides.yaml

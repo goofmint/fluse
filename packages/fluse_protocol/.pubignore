@@ -1,0 +1,4 @@
+# 共通 lint を参照する analysis_options.yaml は公開アーカイブから除外する。
+# include が package 外（../../）を指すため、公開後の解析で
+# include_file_not_found になり pub.dev の静的解析スコアを落とすため。
+analysis_options.yaml

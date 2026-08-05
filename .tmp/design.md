@@ -23,7 +23,7 @@
 
 ### 1.1 システム構成図
 
-```
+```text
 ┌──────────────────────── 開発PC ────────────────────────┐
 │                                                        │
 │  fluse_cli ── init / start / rebuild / doctor / devices│
@@ -298,7 +298,7 @@ class CompileOutput {
 
 起動コマンド（実物検証済み）:
 
-```
+```text
 <dartAotRuntime> <frontend_server_aot.dart.snapshot>
   --sdk-root <flutter_patched_sdk>/
   --incremental
@@ -316,7 +316,7 @@ class CompileOutput {
 ```
 
 stdin/stdout プロトコル:
-```
+```text
 compile <uri>\n
 recompile <uri> <boundaryKey>\n<invalidated uri>\n...\n<boundaryKey>\n
 accept\n
@@ -341,7 +341,7 @@ PUT 仕様: VM Service の HTTP ルートへ `PUT`、ヘッダ `dev_fs_name: <fs
 
 **(d) HotReloadOrchestrator** — 反映の1サイクル。
 
-```
+```text
 FileWatcher が変更検知
   └ debounce 50ms / 指紋変更なら中断してrebuild要求
       ├ CompilerService.recompile(invalidated)
@@ -386,7 +386,7 @@ class SessionManager {
 
 #### 2.2.4 `fluse_cli`
 
-```
+```text
 fluse init      [--flutter-sdk <path>] [--application-id-suffix <s>] [--target <path>] [--device <id>]
 fluse start     [--port <n>] [--host <ip>] [--target <path>] [-d <deviceId>]
 fluse rebuild   [--force]
@@ -395,7 +395,7 @@ fluse devices
 ```
 
 `start` のコンソール表示:
-```
+```text
 fluse 0.1.0  •  Flutter 3.41.9 (00b0c91f)
 
   QRコードをPreview Appでスキャンしてください
@@ -443,7 +443,7 @@ Future<void> _reportVmService() async {
 | `FluseStore` | EncryptedSharedPreferences（deviceToken / lastHost / lastPort） |
 
 **起動シーケンス**:
-```
+```text
 FluseInitProvider.onCreate
   └ ActivityLifecycleCallbacks 登録
       └ 最初の Activity onResume
@@ -463,7 +463,7 @@ Dart main → flusePreviewMain → Service.getInfo() → MethodChannel
 
 ### 3.1 初回接続（要件7・8に対応）
 
-```
+```text
 App                          Server
  │                             │
  │──ws connect────────────────►│
@@ -487,7 +487,7 @@ App                          Server
 
 ### 3.2 更新シーケンス（要件9に対応）
 
-```
+```text
 保存
  └ FileWatcher (debounce 50ms)
      ├ 指紋対象ファイル？ ──Yes──► APP_OUTDATED を表示し Watch 停止
@@ -535,9 +535,10 @@ class FluseContext {
 
 **(a) QR ペイロード**
 
-```
+```text
 fluse://connect?v=1&h=192.168.0.10&p=8180&pid=<projectId>&t=<pairingToken>&rev=00b0c91f
 ```
+
 | キー | 内容 |
 |---|---|
 | `v` | プロトコルバージョン |
@@ -559,7 +560,7 @@ fluse://connect?v=1&h=192.168.0.10&p=8180&pid=<projectId>&t=<pairingToken>&rev=0
 
 | コマンド | 用途 |
 |---|---|
-| `flutter build apk --debug --target=... ` | Preview App ビルド |
+| `flutter build apk --debug --target=...` | Preview App ビルド |
 | `flutter pub get` | `fluse_runtime` 追記後の解決 |
 | `adb devices -l` / `adb install -r` / `adb uninstall` | 端末操作 |
 | `keytool -genkeypair` | 専用keystore生成 |
@@ -596,7 +597,7 @@ fluse://connect?v=1&h=192.168.0.10&p=8180&pid=<projectId>&t=<pairingToken>&rev=0
 
 デフォルト `applicationId` は本番と同一、署名は fluse 専用 keystore のため、通常の `flutter run` でインストール済みの debug アプリと衝突する。
 
-```
+```text
 ✗ インストールに失敗しました (INSTALL_FAILED_UPDATE_INCOMPATIBLE)
 
   端末に同じ applicationId (com.example.myapp) のアプリが
@@ -713,7 +714,7 @@ serveApk: true
 ```
 
 **`.flutter_preview/`（全て gitignore）**
-```
+```text
 .flutter_preview/
   secret                    # projectSecret (600)
   devices.json              # ペアリング済み端末
