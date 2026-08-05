@@ -246,8 +246,9 @@ void main() {
   });
 
   test('LocalProcessManager は ProcessManager として使える', () {
-    // 本番実装が抽象を満たしていることの確認。実際のプロセスは起動しない。
+    // 本番実装が抽象を満たすことは、この代入が型検査を通ることで保証される。
+    // 振る舞いは canRun で確認する。実際のプロセスは起動しない。
     const ProcessManager production = LocalProcessManager();
-    expect(production, isA<ProcessManager>());
+    expect(production.canRun('fluse-no-such-executable-12345'), isFalse);
   });
 }

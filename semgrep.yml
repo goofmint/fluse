@@ -27,7 +27,15 @@ rules:
     paths:
       include:
         - "*.dart"
-    pattern-regex: '(?i)(keystore_?password|store_?password|key_?password|api_?key|auth_?token|access_?token|secret)\s*[:=]\s*[''"][^''"\n]{4,}[''"]'
+      exclude:
+        # トークンのマスク処理（redact）のテストは、トークンの形をした
+        # リテラルを持つことが仕様そのものであり、除外しないと恒常的に
+        # 赤くなる。恒常的な誤検知はルール全体を無視させるため避ける。
+        # テスト以外に直書きされた値は引き続き検出する。
+        - "*_test.dart"
+    # キー名は裸（`apiKey: 'x'`）でも引用符付き（`{'apiKey': 'x'}`）でも拾う。
+    # Map リテラルではキーが引用されるため、裸のみだと取りこぼす。
+    pattern-regex: '(?i)[''"]?(keystore_?password|store_?password|key_?password|api_?key|auth_?token|access_?token|device_?token|pairing_?token|token|secret)[''"]?\s*[:=]\s*[''"][^''"\n]{4,}[''"]'
     message: >-
       機密情報とみられる値がソースに直書きされている。keystore パスワード・トークン・
       API キーは環境変数か利用者が指定する設定から読み込み、リポジトリには含めないこと

@@ -53,6 +53,26 @@ Object? redact(Object? value, {Iterable<String> secrets = const <String>[]}) {
             : redact(entry.value, secrets: secrets),
     };
   }
+  return _redactNonMap(value, secrets);
+}
+
+/// [Map] 専用の入口。
+///
+/// [redact] の戻り値は [Object?] なので、Map と分かっている経路で使うと
+/// 呼び出し側に強制キャストが必要になる。それを避けるためのもの。
+Map<String, Object?> redactMap(
+  Map<String, Object?> value, {
+  Iterable<String> secrets = const <String>[],
+}) {
+  return <String, Object?>{
+    for (final MapEntry<String, Object?> entry in value.entries)
+      entry.key: _isSecretKey(entry.key)
+          ? _maskAny(entry.value)
+          : redact(entry.value, secrets: secrets),
+  };
+}
+
+Object? _redactNonMap(Object? value, Iterable<String> secrets) {
   if (value is Iterable) {
     return value.map((Object? e) => redact(e, secrets: secrets)).toList();
   }
@@ -92,20 +112,60 @@ String _maskUriAuthCode(String raw) {
   if (uri == null || !uri.hasAuthority) {
     return raw;
   }
+
+  Uri masked = uri;
+  bool changed = false;
+
+  // (1) パスセグメントの認証コード。
   // 末尾の空セグメント（`.../` の表現）は残す。落とすと URI の形が変わる。
   final List<String> segments = List<String>.of(uri.pathSegments);
   final int index = segments.indexWhere((String s) => s.isNotEmpty);
-  if (index < 0) {
-    return raw;
-  }
   // VM Service の認証コードは base64url 風の十分に長い1セグメント。
   // `/health` のような通常のパスを巻き込まないよう長さで足切りする。
-  if (segments[index].length < 8) {
-    return raw;
+  if (index >= 0 && segments[index].length >= 8) {
+    segments[index] = maskToken(segments[index]);
+    masked = masked.replace(pathSegments: segments);
+    changed = true;
   }
-  segments[index] = maskToken(segments[index]);
-  return uri.replace(pathSegments: segments).toString();
+
+  // (2) クエリの秘密パラメータ。`/apk?t=<pairingToken>`（設計 §4.2(b)）など。
+  //
+  // Uri.replace(queryParameters:) は値をパーセントエンコードするため、
+  // マスク記号が `%2A%2A%2A` になってログが読めなくなる。クエリ文字列を
+  // 自前で組み立て、マスク済みの値だけエンコードせずに置く。
+  if (uri.hasQuery && uri.queryParameters.isNotEmpty) {
+    final List<String> parts = <String>[];
+    bool queryChanged = false;
+    for (final MapEntry<String, String> e in uri.queryParameters.entries) {
+      final String key = Uri.encodeQueryComponent(e.key);
+      if (_isSecretKey(e.key) || _isShortSecretQueryKey(e.key)) {
+        parts.add('$key=${maskToken(e.value)}');
+        queryChanged = true;
+      } else {
+        parts.add('$key=${Uri.encodeQueryComponent(e.value)}');
+      }
+    }
+    if (queryChanged) {
+      masked = masked.replace(query: parts.join('&'));
+      changed = true;
+    }
+  }
+
+  // (3) userInfo は `user:password` 形式で必ず資格情報。無条件に潰す。
+  if (uri.userInfo.isNotEmpty) {
+    masked = masked.replace(userInfo: _mask);
+    changed = true;
+  }
+
+  return changed ? masked.toString() : raw;
 }
+
+/// クエリでよく使われる短い秘密キー。
+///
+/// `_isSecretKey` は部分一致なので `t` のような1文字キーは拾えない。
+/// クエリに限っては完全一致で補う。
+bool _isShortSecretQueryKey(String key) =>
+    const <String>{'t', 'k', 'pw', 'auth'}.contains(key.toLowerCase());
 
 /// 既知の秘密値そのものを本文から消す。
 ///

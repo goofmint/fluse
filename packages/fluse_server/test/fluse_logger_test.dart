@@ -194,14 +194,60 @@ void main() {
     });
   });
 
-  test('close は全シンクを閉じる', () async {
-    final MemoryLogSink other = MemoryLogSink();
-    await FluseLogger(
-      sinks: <FluseLogSink>[sink, other],
-      clock: fixedClock,
-    ).close();
-    // MemoryLogSink の close は何もしないので、例外なく完了することを見る。
-    expect(sink.lines, isEmpty);
-    expect(other.lines, isEmpty);
+  group('close', () {
+    test('全シンクを閉じる', () async {
+      final _CountingSink a = _CountingSink();
+      final _CountingSink b = _CountingSink();
+
+      await FluseLogger(sinks: <FluseLogSink>[a, b], clock: fixedClock).close();
+
+      expect(a.closeCount, 1);
+      expect(b.closeCount, 1);
+    });
+
+    test('途中のシンクが失敗しても残りを閉じ、最初の例外を投げる', () async {
+      // 途中で抜けるとファイルハンドルが残る。
+      final _CountingSink after = _CountingSink();
+      final FluseLogger logger = FluseLogger(
+        sinks: <FluseLogSink>[_FailingSink('1つ目'), _FailingSink('2つ目'), after],
+        clock: fixedClock,
+      );
+
+      await expectLater(
+        logger.close(),
+        throwsA(
+          isA<StateError>().having(
+            (StateError e) => e.message,
+            'message',
+            '1つ目',
+          ),
+        ),
+      );
+      expect(after.closeCount, 1);
+    });
   });
+}
+
+/// close の呼び出し回数を記録するシンク。
+final class _CountingSink implements FluseLogSink {
+  int closeCount = 0;
+
+  @override
+  void writeLine(String line) {}
+
+  @override
+  Future<void> close() async => closeCount++;
+}
+
+/// close が必ず失敗するシンク。
+final class _FailingSink implements FluseLogSink {
+  _FailingSink(this.label);
+
+  final String label;
+
+  @override
+  void writeLine(String line) {}
+
+  @override
+  Future<void> close() async => throw StateError(label);
 }

@@ -123,11 +123,61 @@ void main() {
       );
     });
 
-    test('文中に埋まっていても URI 単体なら処理する', () {
-      // ログの message はまるごと1本の URI であることが多い。
+    test('URI 単体を処理する', () {
       expect(
         redactVmServiceUri('ws://192.168.0.10:8181/AbCdEfGhIjK=/ws'),
         'ws://192.168.0.10:8181/AbCd***/ws',
+      );
+    });
+
+    test('地の文に埋まった URI だけを置換する', () {
+      expect(
+        redactVmServiceUri(
+          'vm service at http://127.0.0.1:43219/xY7Kq2Lm9Ab=/ に接続しました',
+        ),
+        'vm service at http://127.0.0.1:43219/xY7K***/ に接続しました',
+      );
+    });
+
+    test('1つの文に複数の URI があれば全て処理する', () {
+      expect(
+        redactVmServiceUri(
+          'from http://127.0.0.1:1/aaaaaaaaaa/ to ws://127.0.0.1:2/bbbbbbbbbb/',
+        ),
+        'from http://127.0.0.1:1/aaaa***/ to ws://127.0.0.1:2/bbbb***/',
+      );
+    });
+
+    test('URI として解釈できない文字列はそのまま返す', () {
+      // Uri.tryParse が null を返す入力。
+      expect(redactVmServiceUri('http://[::'), 'http://[::');
+    });
+
+    test('クエリの秘密パラメータをマスクする', () {
+      // 設計 §4.2(b) の /apk?t=<pairingToken>。
+      expect(
+        redactVmServiceUri('http://192.168.0.10:8180/apk?t=abcdefghij'),
+        'http://192.168.0.10:8180/apk?t=abcd***',
+      );
+      expect(
+        redactVmServiceUri(
+          'http://192.168.0.10:8180/x?deviceToken=abcdefghij&d=pixel',
+        ),
+        'http://192.168.0.10:8180/x?deviceToken=abcd***&d=pixel',
+      );
+    });
+
+    test('秘密でないクエリは変更しない', () {
+      expect(
+        redactVmServiceUri('http://192.168.0.10:8180/health?verbose=1'),
+        'http://192.168.0.10:8180/health?verbose=1',
+      );
+    });
+
+    test('userInfo は無条件にマスクする', () {
+      expect(
+        redactVmServiceUri('http://user:hunter2@127.0.0.1:8180/health'),
+        'http://***@127.0.0.1:8180/health',
       );
     });
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -46,13 +47,31 @@ abstract interface class FluseLogSink {
 
 /// `.flutter_preview/logs/fluse-<timestamp>.log` に追記するシンク（設計 §5.2）。
 final class FileLogSink implements FluseLogSink {
-  FileLogSink(this._sink);
+  FileLogSink(this._sink, {void Function(Object error)? onWriteError}) {
+    // IOSink は書き込みエラーを同期的に投げず、done にだけ届ける。
+    // 監視しないと未処理の非同期エラーになり、書き込み失敗にも気付けない。
+    // ログ自身の失敗でアプリを落とすのは本末転倒なので、既定は stderr へ出すだけ。
+    unawaited(
+      _sink.done.catchError(
+        (Object error) => (onWriteError ?? _reportToStderr)(error),
+      ),
+    );
+  }
 
   /// [file] を追記モードで開く。親ディレクトリが無ければ作る。
-  factory FileLogSink.open(File file) {
+  factory FileLogSink.open(
+    File file, {
+    void Function(Object error)? onWriteError,
+  }) {
     file.parent.createSync(recursive: true);
-    return FileLogSink(file.openWrite(mode: FileMode.append));
+    return FileLogSink(
+      file.openWrite(mode: FileMode.append),
+      onWriteError: onWriteError,
+    );
   }
+
+  static void _reportToStderr(Object error) =>
+      stderr.writeln('fluse: ログファイルへの書き込みに失敗しました: $error');
 
   final IOSink _sink;
 
@@ -153,8 +172,10 @@ final class FluseLogger {
     if (fields != null) {
       // マスク判定はキー名を見るため、値だけを個別に渡すと機能しない。
       // fields をまるごと通してから展開する。
-      final Map<String, Object?> scrubbed =
-          redact(fields, secrets: _secrets)! as Map<String, Object?>;
+      final Map<String, Object?> scrubbed = redactMap(
+        fields,
+        secrets: _secrets,
+      );
       for (final MapEntry<String, Object?> entry in scrubbed.entries) {
         // 予約キーをフィールドで上書きさせない。上書きを許すと
         // ログの機械処理側が壊れる。
@@ -171,9 +192,21 @@ final class FluseLogger {
     }
   }
 
+  /// 全てのシンクを閉じる。
+  ///
+  /// 1つのシンクが失敗しても残りは必ず閉じる。途中で抜けるとファイル
+  /// ハンドルが残るため。失敗があれば最初の例外を再送出する。
   Future<void> close() async {
+    (Object, StackTrace)? firstFailure;
     for (final FluseLogSink sink in _sinks) {
-      await sink.close();
+      try {
+        await sink.close();
+      } on Object catch (error, stackTrace) {
+        firstFailure ??= (error, stackTrace);
+      }
+    }
+    if (firstFailure != null) {
+      Error.throwWithStackTrace(firstFailure.$1, firstFailure.$2);
     }
   }
 
