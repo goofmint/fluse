@@ -2,5 +2,8 @@
 ///
 /// ユーザープロジェクトを新規生成せず、そのまま debug ビルドし
 /// エントリポイントだけを差し替える方針を実装する。
-/// 実装は Task 1.1 以降で追加する。
 library;
+
+export 'src/flutter_sdk.dart';
+export 'src/host_platform.dart';
+export 'src/sdk_not_found_exception.dart';
