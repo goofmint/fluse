@@ -133,16 +133,24 @@ String _maskUriAuthCode(String raw) {
   // Uri.replace(queryParameters:) は値をパーセントエンコードするため、
   // マスク記号が `%2A%2A%2A` になってログが読めなくなる。クエリ文字列を
   // 自前で組み立て、マスク済みの値だけエンコードせずに置く。
-  if (uri.hasQuery && uri.queryParameters.isNotEmpty) {
+  //
+  // 同じキーが複数回現れる URI があるため queryParametersAll を使う。
+  // queryParameters は重複キーを1つに潰すので、組み立て直すと値が消える。
+  if (uri.hasQuery && uri.queryParametersAll.isNotEmpty) {
     final List<String> parts = <String>[];
     bool queryChanged = false;
-    for (final MapEntry<String, String> e in uri.queryParameters.entries) {
+    for (final MapEntry<String, List<String>> e
+        in uri.queryParametersAll.entries) {
       final String key = Uri.encodeQueryComponent(e.key);
-      if (_isSecretKey(e.key) || _isShortSecretQueryKey(e.key)) {
-        parts.add('$key=${maskToken(e.value)}');
-        queryChanged = true;
-      } else {
-        parts.add('$key=${Uri.encodeQueryComponent(e.value)}');
+      final bool isSecret =
+          _isSecretKey(e.key) || _isShortSecretQueryKey(e.key);
+      for (final String value in e.value) {
+        if (isSecret) {
+          parts.add('$key=${maskToken(value)}');
+          queryChanged = true;
+        } else {
+          parts.add('$key=${Uri.encodeQueryComponent(value)}');
+        }
       }
     }
     if (queryChanged) {

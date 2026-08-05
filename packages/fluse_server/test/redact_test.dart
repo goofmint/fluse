@@ -167,6 +167,25 @@ void main() {
       );
     });
 
+    test('重複したクエリキーの値を落とさない', () {
+      // queryParameters は重複キーを潰すため、組み立て直すと値が消える。
+      expect(
+        redactVmServiceUri(
+          'http://192.168.0.10:8180/x?tag=a&tag=b&t=abcdefghij',
+        ),
+        'http://192.168.0.10:8180/x?tag=a&tag=b&t=abcd***',
+      );
+    });
+
+    test('重複した秘密キーは全てマスクする', () {
+      expect(
+        redactVmServiceUri(
+          'http://192.168.0.10:8180/x?t=abcdefghij&t=zyxwvutsrq',
+        ),
+        'http://192.168.0.10:8180/x?t=abcd***&t=zyxw***',
+      );
+    });
+
     test('秘密でないクエリは変更しない', () {
       expect(
         redactVmServiceUri('http://192.168.0.10:8180/health?verbose=1'),
