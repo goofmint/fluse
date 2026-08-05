@@ -749,7 +749,7 @@ serveApk: true
 
 5. **`flusePreviewMain` はユーザーの `main()` を先に呼ぶ**。先に `WidgetsFlutterBinding.ensureInitialized()` を呼ぶと、独自 binding や `runZonedGuarded` を使うアプリの初期化順序を壊す。
 
-6. **Hot Restart 耐性**: `FluseConnection` は Activity ではなく Application スコープに置く。Hot Restart は Dart isolate のみを作り直すので Android プロセスは生きており、接続は維持される。ただし `vmServiceReady` は再送されるため、Native 側は同一URIを冪等に扱うこと。
+6. **Hot Restart 耐性**: ここでいう耐性とは、**IDE や `flutter attach` などユーザー側の操作で Hot Restart が起きても接続が壊れないこと**を指す（fluse 自身が Hot Restart をトリガする機能は Phase1 では提供しない。項目10を参照）。`FluseConnection` は Activity ではなく Application スコープに置く。Hot Restart は Dart isolate のみを作り直すので Android プロセスは生きており、接続は維持される。ただし `vmServiceReady` は再送されるため、Native 側は同一URIを冪等に扱うこと。
 
 7. **`.flutter_preview/` の gitignore 追記は init で必ず行う**。`secret` と `keystore/` が漏れる。追記は idempotent に。
 
@@ -757,7 +757,7 @@ serveApk: true
 
 9. **`projectId` は絶対パスを含める**。同一 `name` のプロジェクトが複数ある環境（テンプレートから作った複数アプリ）で誤接続を防ぐ。
 
-10. **Phase1 のスコープ外を明示的に落とす**: iOS、Hot Restart、マルチデバイス同時接続、TLS。`fluse start` に2台目が接続してきたら `reject(TOO_MANY_DEVICES)` を返し、曖昧な半対応を作らない。
+10. **Phase1 のスコープ外を明示的に落とす**: iOS、**Hot Restart の能動的トリガ**（`fluse` からの再起動指示 / `R` キー相当の UI）、マルチデバイス同時接続、TLS。`fluse start` に2台目が接続してきたら `reject(TOO_MANY_DEVICES)` を返し、曖昧な半対応を作らない。なお**ユーザー起因の Hot Restart に対する接続維持は Phase1 のスコープ内**であり（項目6）、Task 6.3 の E2E で検証する。
 
 11. **`flutter build apk --debug` は flutter_tools を CLI として呼ぶだけに留める**。`packages/flutter_tools` への path dependency は SDK バージョン追従が破綻するため禁止（設計方針として厳守）。
 

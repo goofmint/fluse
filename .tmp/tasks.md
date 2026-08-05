@@ -454,7 +454,7 @@
 #### Task 6.3: E2E シナリオの整備と実機検証
 
 - [ ] `docs/e2e-checklist.md` に手動シナリオを記載
-- [ ] シナリオ: 初回 `init` → `start` → QRスキャン → Dart変更 → asset変更 → コンパイルエラー → 復旧 → Hot Restart → 再接続
+- [ ] シナリオ: 初回 `init` → `start` → QRスキャン → Dart変更 → asset変更 → コンパイルエラー → 復旧 → IDE 等からの Hot Restart → 接続が維持されることの確認（設計 §10-6）
 - [ ] シナリオ: adb 不在時の APK 配信導線
 - [ ] シナリオ: 署名衝突の3択
 - [ ] シナリオ: `pubspec.lock` 変更 → `APP_OUTDATED` → `rebuild`
