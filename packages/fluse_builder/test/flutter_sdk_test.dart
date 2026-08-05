@@ -266,6 +266,51 @@ void main() {
     });
   });
 
+  group('Windows のパス', () {
+    // 解決時とパス組み立て時で判定がずれないよう、isWindows は
+    // インスタンスが保持する。
+    FlutterSdk sdkFor({required bool isWindows}) => FlutterSdk(
+      root: r'C:\src\flutter',
+      version: '3.41.9',
+      revision: '0' * 40,
+      dartVersion: '3.11.5',
+      engineDirectoryName: 'windows-x64',
+      isWindows: isWindows,
+    );
+
+    test('実行ファイル名に拡張子が付く', () {
+      expect(FlutterSdk.flutterExecutableName(isWindows: true), 'flutter.bat');
+      expect(
+        FlutterSdk.dartAotRuntimeName(isWindows: true),
+        'dartaotruntime.exe',
+      );
+    });
+
+    test('非 Windows では拡張子が付かない', () {
+      expect(FlutterSdk.flutterExecutableName(isWindows: false), 'flutter');
+      expect(FlutterSdk.dartAotRuntimeName(isWindows: false), 'dartaotruntime');
+    });
+
+    test('ゲッターが isWindows を反映する', () {
+      final FlutterSdk windows = sdkFor(isWindows: true);
+      expect(p.basename(windows.flutterExecutable), 'flutter.bat');
+      expect(p.basename(windows.dartAotRuntime), 'dartaotruntime.exe');
+
+      final FlutterSdk posix = sdkFor(isWindows: false);
+      expect(p.basename(posix.flutterExecutable), 'flutter');
+      expect(p.basename(posix.dartAotRuntime), 'dartaotruntime');
+    });
+
+    test('スナップショットと patched SDK は拡張子を持たない', () {
+      final FlutterSdk windows = sdkFor(isWindows: true);
+      expect(
+        p.basename(windows.frontendServerSnapshot),
+        'frontend_server_aot.dart.snapshot',
+      );
+      expect(p.basename(windows.patchedSdkRoot), 'flutter_patched_sdk');
+    });
+  });
+
   group('SDK 未検出', () {
     test('PATH に flutter が無ければ例外になる', () async {
       await expectLater(

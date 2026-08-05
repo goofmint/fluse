@@ -18,6 +18,7 @@ final class FlutterSdk {
     required this.revision,
     required this.dartVersion,
     required this.engineDirectoryName,
+    required this.isWindows,
   });
 
   /// SDK のルート（`$FLUTTER_ROOT`）。
@@ -38,17 +39,33 @@ final class FlutterSdk {
   /// エンジン成果物が実在したディレクトリ名。例: `darwin-x64`
   final String engineDirectoryName;
 
-  /// PATH 探索で使う実行ファイル名。
-  static String executableName({bool isWindows = false}) =>
+  /// Windows のホストか。実行ファイル名の拡張子を決めるために保持する。
+  ///
+  /// [resolve] に渡された値をそのまま持つ。ゲッターが `Platform.isWindows`
+  /// を直接見ると、解決時とパス組み立て時で判定がずれる余地ができるため。
+  final bool isWindows;
+
+  /// `flutter` 実行ファイルの名前。Windows では `flutter.bat`。
+  static String flutterExecutableName({required bool isWindows}) =>
       isWindows ? 'flutter.bat' : 'flutter';
+
+  /// `dartaotruntime` 実行ファイルの名前。Windows では `.exe` が付く。
+  static String dartAotRuntimeName({required bool isWindows}) =>
+      isWindows ? 'dartaotruntime.exe' : 'dartaotruntime';
 
   /// `flutter` 実行ファイル。`flutter build apk` の呼び出しに使う。
   String get flutterExecutable =>
-      p.join(root, 'bin', executableName(isWindows: Platform.isWindows));
+      p.join(root, 'bin', flutterExecutableName(isWindows: isWindows));
 
   /// `frontend_server` を動かす AOT ランタイム。
-  String get dartAotRuntime =>
-      p.join(root, 'bin', 'cache', 'dart-sdk', 'bin', 'dartaotruntime');
+  String get dartAotRuntime => p.join(
+    root,
+    'bin',
+    'cache',
+    'dart-sdk',
+    'bin',
+    dartAotRuntimeName(isWindows: isWindows),
+  );
 
   /// エンジン成果物のディレクトリ。
   String get engineArtifactsDirectory =>
@@ -85,19 +102,20 @@ final class FlutterSdk {
     String? explicitRoot,
     ProcessManager processManager = const LocalProcessManager(),
     Map<String, String>? environment,
-    bool isWindows = false,
+    bool? isWindows,
   }) async {
+    final bool onWindows = isWindows ?? Platform.isWindows;
     final Map<String, String> env = environment ?? Platform.environment;
     final String root = _resolveRoot(
       explicitRoot: explicitRoot,
       environment: env,
-      isWindows: isWindows,
+      isWindows: onWindows,
     );
 
     final _VersionInfo info = await _readVersion(
       root: root,
       processManager: processManager,
-      isWindows: isWindows,
+      isWindows: onWindows,
     );
 
     final String engineDirectoryName = _resolveEngineDirectory(root);
@@ -108,6 +126,7 @@ final class FlutterSdk {
       revision: info.revision,
       dartVersion: info.dartVersion,
       engineDirectoryName: engineDirectoryName,
+      isWindows: onWindows,
     );
     sdk._verifyArtifacts();
     return sdk;
@@ -170,7 +189,7 @@ final class FlutterSdk {
     }
 
     final String separator = isWindows ? ';' : ':';
-    final String executable = executableName(isWindows: isWindows);
+    final String executable = flutterExecutableName(isWindows: isWindows);
 
     for (final String entry in pathVariable.split(separator)) {
       if (entry.isEmpty) {
@@ -183,14 +202,26 @@ final class FlutterSdk {
       }
       // `<root>/bin/flutter` の2つ上がルート。シンボリックリンク経由でも
       // 実体の位置を基準にしたいので解決してから辿る。
-      final String resolved = File(candidate).resolveSymbolicLinksSync();
+      //
+      // existsSync との間に TOCTOU があり、リンク切れ・権限不足・実行中の
+      // 削除で FileSystemException が飛ぶ。呼び出し元は SdkNotFoundException
+      // だけを期待しているので、ここで変換する。
+      final String resolved;
+      try {
+        resolved = File(candidate).resolveSymbolicLinksSync();
+      } on FileSystemException catch (error) {
+        throw SdkNotFoundException.rootNotFound(
+          reason: 'PATH 上の flutter 実行ファイルの実体を解決できません: ${error.message}',
+          searchedPaths: searched,
+        );
+      }
       return p.dirname(p.dirname(resolved));
     }
     return null;
   }
 
   static bool _looksLikeSdkRoot(String root, {required bool isWindows}) => File(
-    p.join(root, 'bin', executableName(isWindows: isWindows)),
+    p.join(root, 'bin', flutterExecutableName(isWindows: isWindows)),
   ).existsSync();
 
   static Future<_VersionInfo> _readVersion({
@@ -201,7 +232,7 @@ final class FlutterSdk {
     final String executable = p.join(
       root,
       'bin',
-      executableName(isWindows: isWindows),
+      flutterExecutableName(isWindows: isWindows),
     );
 
     final ProcessResult result;
