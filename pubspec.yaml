@@ -1,0 +1,41 @@
+name: fluse_workspace
+description: fluse (Flutter Preview Client) のモノレポワークスペース。
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+
+# pub workspaces のメンバー。Melos 7 以降は melos.yaml を廃止し、
+# パッケージ一覧をこの workspace キーで管理する。glob は未対応のため個別に列挙する。
+workspace:
+  - packages/fluse_protocol
+  - packages/fluse_builder
+  - packages/fluse_server
+  - packages/fluse_cli
+  - packages/fluse_runtime
+
+dev_dependencies:
+  lints: ^6.0.0
+  melos: ^8.2.2
+
+melos:
+  # ワークスペース名はルートパッケージの `name`（fluse_workspace）を使う。
+  # melos.name を別に持つと表示名が二重管理になるため定義しない。
+
+  scripts:
+    analyze:
+      description: 全パッケージを静的解析する。info / warning も失敗として扱う。
+      exec:
+        command: dart analyze --fatal-infos --fatal-warnings .
+
+    test:
+      description: test ディレクトリを持つ全パッケージのテストを実行する。
+      # packageFilters + exec は該当パッケージが0件のとき
+      # NoPackageFoundScriptException で落ちるため、melos exec を直接呼ぶ。
+      # まだテストが1つも無い Phase 0 の時点でも正常終了させたい。
+      run: melos exec --dir-exists=test -- dart test
+
+    format:
+      description: 全パッケージのフォーマットを検査する（差分があれば失敗）。
+      exec:
+        command: dart format --output=none --set-exit-if-changed .

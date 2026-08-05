@@ -1,0 +1,10 @@
+name: fluse_builder
+description: Flutter SDK 解決・プロジェクト解析・指紋計算・エントリポイント生成・keystore 管理・APK ビルドと端末インストールを担う。
+version: 0.1.0
+# pub.dev への公開は Task 7.3 でまとめて解禁する。
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+
+resolution: workspace
