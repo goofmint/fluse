@@ -1,8 +1,11 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:fluse_builder/fluse_builder.dart';
 import 'package:fluse_server/testing.dart';
 import 'package:path/path.dart' as p;
+import 'package:process/process.dart';
 import 'package:test/test.dart';
 
 /// Flutter 3.41.9 の `flutter --version --machine` を模した出力。
@@ -263,6 +266,82 @@ void main() {
       expect(File(sdk.dartAotRuntime).existsSync(), isTrue);
       expect(File(sdk.frontendServerSnapshot).existsSync(), isTrue);
       expect(Directory(sdk.patchedSdkRoot).existsSync(), isTrue);
+    });
+  });
+
+  group('エンジンディレクトリの候補', () {
+    test('darwin-arm64 が無ければ darwin-x64 に切り替わる', () async {
+      // Apple Silicon でもエンジン成果物は darwin-x64 に置かれることがある。
+      createSdkTree(root: sdkRoot, engineDirectoryName: 'darwin-x64');
+      registerVersion(flutterExecutable);
+
+      final FlutterSdk sdk = await FlutterSdk.resolve(
+        explicitRoot: sdkRoot,
+        processManager: processManager,
+        environment: <String, String>{},
+        hostPlatform: HostPlatform.darwinArm64,
+      );
+
+      expect(sdk.engineDirectoryName, 'darwin-x64');
+      expect(File(sdk.frontendServerSnapshot).existsSync(), isTrue);
+    });
+
+    test('darwin-arm64 があればそちらを使う', () async {
+      createSdkTree(root: sdkRoot, engineDirectoryName: 'darwin-arm64');
+      registerVersion(flutterExecutable);
+
+      final FlutterSdk sdk = await FlutterSdk.resolve(
+        explicitRoot: sdkRoot,
+        processManager: processManager,
+        environment: <String, String>{},
+        hostPlatform: HostPlatform.darwinArm64,
+      );
+
+      expect(sdk.engineDirectoryName, 'darwin-arm64');
+    });
+
+    test('候補が1つのホストは切り替えない', () async {
+      // linux-x64 のホストで darwin-x64 しか無い SDK は解決できない。
+      createSdkTree(root: sdkRoot, engineDirectoryName: 'darwin-x64');
+      registerVersion(flutterExecutable);
+
+      await expectLater(
+        FlutterSdk.resolve(
+          explicitRoot: sdkRoot,
+          processManager: processManager,
+          environment: <String, String>{},
+          hostPlatform: HostPlatform.linuxX64,
+        ),
+        throwsA(
+          isA<SdkNotFoundException>().having(
+            (SdkNotFoundException e) => e.missingPaths,
+            'missingPaths',
+            <Matcher>[contains('linux-x64')],
+          ),
+        ),
+      );
+    });
+  });
+
+  group('flutter --version のタイムアウト', () {
+    test('応答が返らなければタイムアウトで失敗する', () async {
+      createSdkTree(root: sdkRoot);
+
+      await expectLater(
+        FlutterSdk.resolve(
+          explicitRoot: sdkRoot,
+          processManager: _NeverRespondingProcessManager(),
+          environment: <String, String>{},
+          versionTimeout: const Duration(milliseconds: 20),
+        ),
+        throwsA(
+          isA<SdkNotFoundException>().having(
+            (SdkNotFoundException e) => e.toString(),
+            'message',
+            contains('応答しませんでした'),
+          ),
+        ),
+      );
     });
   });
 
@@ -544,4 +623,45 @@ void main() {
     expect(Directory(sdk.patchedSdkRoot).existsSync(), isTrue);
     expect(File(sdk.flutterExecutable).existsSync(), isTrue);
   }, timeout: const Timeout(Duration(minutes: 2)));
+}
+
+/// `run` が永遠に完了しない [ProcessManager]。タイムアウトの検証に使う。
+final class _NeverRespondingProcessManager implements ProcessManager {
+  @override
+  Future<ProcessResult> run(
+    List<Object> command, {
+    String? workingDirectory,
+    Map<String, String>? environment,
+    bool includeParentEnvironment = true,
+    bool runInShell = false,
+    Encoding? stdoutEncoding = systemEncoding,
+    Encoding? stderrEncoding = systemEncoding,
+  }) => Completer<ProcessResult>().future;
+
+  @override
+  Future<Process> start(
+    List<Object> command, {
+    String? workingDirectory,
+    Map<String, String>? environment,
+    bool includeParentEnvironment = true,
+    bool runInShell = false,
+    ProcessStartMode mode = ProcessStartMode.normal,
+  }) => Completer<Process>().future;
+
+  @override
+  ProcessResult runSync(
+    List<Object> command, {
+    String? workingDirectory,
+    Map<String, String>? environment,
+    bool includeParentEnvironment = true,
+    bool runInShell = false,
+    Encoding? stdoutEncoding = systemEncoding,
+    Encoding? stderrEncoding = systemEncoding,
+  }) => throw UnimplementedError();
+
+  @override
+  bool canRun(Object? executable, {String? workingDirectory}) => true;
+
+  @override
+  bool killPid(int pid, [ProcessSignal signal = ProcessSignal.sigterm]) => true;
 }

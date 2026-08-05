@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -53,6 +54,16 @@ final class FlutterSdk {
   static String dartAotRuntimeName({required bool isWindows}) =>
       isWindows ? 'dartaotruntime.exe' : 'dartaotruntime';
 
+  /// 増分コンパイラのスナップショットのファイル名。
+  static const String frontendServerSnapshotName =
+      'frontend_server_aot.dart.snapshot';
+
+  /// `flutter --version --machine` の待ち時間の既定値。
+  ///
+  /// 初回実行では Dart SDK のダウンロードを伴うことがあるため長めに取る。
+  /// 無期限に待つと呼び出し元に中断手段が無くなる。
+  static const Duration defaultVersionTimeout = Duration(minutes: 5);
+
   /// `flutter` 実行ファイル。`flutter build apk` の呼び出しに使う。
   String get flutterExecutable =>
       p.join(root, 'bin', flutterExecutableName(isWindows: isWindows));
@@ -82,7 +93,7 @@ final class FlutterSdk {
   String get frontendServerSnapshot => p.join(
     engineArtifactsDirectory,
     engineDirectoryName,
-    'frontend_server_aot.dart.snapshot',
+    frontendServerSnapshotName,
   );
 
   /// `--sdk-root` に渡す patched SDK。ホストによらず `common` にある。
@@ -103,6 +114,8 @@ final class FlutterSdk {
     ProcessManager processManager = const LocalProcessManager(),
     Map<String, String>? environment,
     bool? isWindows,
+    HostPlatform? hostPlatform,
+    Duration versionTimeout = defaultVersionTimeout,
   }) async {
     final bool onWindows = isWindows ?? Platform.isWindows;
     final Map<String, String> env = environment ?? Platform.environment;
@@ -116,9 +129,13 @@ final class FlutterSdk {
       root: root,
       processManager: processManager,
       isWindows: onWindows,
+      timeout: versionTimeout,
     );
 
-    final String engineDirectoryName = _resolveEngineDirectory(root);
+    final String engineDirectoryName = _resolveEngineDirectory(
+      root,
+      host: hostPlatform,
+    );
 
     final FlutterSdk sdk = FlutterSdk(
       root: root,
@@ -228,6 +245,7 @@ final class FlutterSdk {
     required String root,
     required ProcessManager processManager,
     required bool isWindows,
+    required Duration timeout,
   }) async {
     final String executable = p.join(
       root,
@@ -237,11 +255,14 @@ final class FlutterSdk {
 
     final ProcessResult result;
     try {
-      result = await processManager.run(<String>[
-        executable,
-        '--version',
-        '--machine',
-      ]);
+      result = await processManager
+          .run(<String>[executable, '--version', '--machine'])
+          .timeout(timeout);
+    } on TimeoutException {
+      throw SdkNotFoundException.versionUnavailable(
+        root: root,
+        reason: 'flutter --version --machine が $timeout 以内に応答しませんでした',
+      );
     } on Object catch (error) {
       throw SdkNotFoundException.versionUnavailable(
         root: root,
@@ -327,8 +348,8 @@ final class FlutterSdk {
   /// Apple Silicon では `darwin-arm64` ではなく `darwin-x64` に置かれる
   /// ことがあるため（[HostPlatform.engineDirectoryCandidates] 参照）、
   /// 候補を順に見て実在するものを採用する。どれも無ければ例外にする。
-  static String _resolveEngineDirectory(String root) {
-    final HostPlatform host = HostPlatform.resolve();
+  static String _resolveEngineDirectory(String root, {HostPlatform? host}) {
+    final HostPlatform resolvedHost = host ?? HostPlatform.resolve();
     final String engineRoot = p.join(
       root,
       'bin',
@@ -338,11 +359,11 @@ final class FlutterSdk {
     );
 
     final List<String> checked = <String>[];
-    for (final String name in host.engineDirectoryCandidates) {
+    for (final String name in resolvedHost.engineDirectoryCandidates) {
       final String candidate = p.join(
         engineRoot,
         name,
-        'frontend_server_aot.dart.snapshot',
+        frontendServerSnapshotName,
       );
       checked.add(candidate);
       if (File(candidate).existsSync()) {
