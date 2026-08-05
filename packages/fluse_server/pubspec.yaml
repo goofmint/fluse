@@ -8,3 +8,11 @@ environment:
   sdk: ^3.9.0
 
 resolution: workspace
+
+dependencies:
+  # 外部プロセス（flutter / adb / keytool / frontend_server）の抽象。
+  # flutter_tools も同じパッケージを使っている。
+  process: ^5.0.5
+
+dev_dependencies:
+  test: ^1.26.0
