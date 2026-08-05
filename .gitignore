@@ -1,1 +1,22 @@
-.tmp
+# Dart / Flutter のツール成果物
+.dart_tool/
+.packages
+build/
+doc/api/
+
+# pub workspaces ではロックファイルはルートに1つだけ生成される。
+# 全パッケージが pub.dev 公開ライブラリのためコミットしない。
+pubspec.lock
+
+# Melos 6 以前が生成する残骸（移行時の取りこぼし対策）
+pubspec_overrides.yaml
+
+# fluse がユーザープロジェクト側に作る作業ディレクトリ。
+# keystore / secret を含むため絶対にコミットしない（設計 §9.2）。
+.flutter_preview/
+
+# エディタ / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
