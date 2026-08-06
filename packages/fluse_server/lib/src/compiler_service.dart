@@ -158,10 +158,15 @@ final class CompilerService implements CompilerContract {
     '--packages',
     packagesPath,
     if (trackWidgetCreation) '--track-widget-creation',
-    '--filesystem-root',
-    projectRoot,
-    '--filesystem-scheme',
-    fileSystemScheme,
+    // スキームが空なら multi-root を使わない。`flutter build apk` が
+    // 生成する kernel は package: URI なので、そちらに合わせる場合は
+    // 両方とも渡してはいけない。
+    if (fileSystemScheme.isNotEmpty) ...<String>[
+      '--filesystem-root',
+      projectRoot,
+      '--filesystem-scheme',
+      fileSystemScheme,
+    ],
     '--initialize-from-dill',
     outputDill,
     if (enableAsserts) '--enable-asserts',

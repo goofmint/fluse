@@ -333,13 +333,16 @@ class CompileOutput {
   --output-dill .flutter_preview/cache/app.dill
   --packages .dart_tool/package_config.json
   --track-widget-creation
-  --filesystem-root <projectRoot>
-  --filesystem-scheme org-dartlang-root
   --initialize-from-dill .flutter_preview/cache/app.dill
   --enable-asserts
   --verbosity=error
   [-D<key>=<value> ...]
 ```
+
+> **`--filesystem-root` / `--filesystem-scheme` は渡さない**（Task 1.6 のスパイクで確定）。
+> `flutter build apk --debug` はこの2つを渡しておらず、APK 内の kernel のライブラリ URI は
+> `package:<name>/main.dart` 形式になる。増分コンパイル側だけ `org-dartlang-root:///` に
+> すると URI が食い違い、差分が当たらない。**エントリポイントも `package:` URI で指定する。**
 
 stdin/stdout プロトコル:
 ```text
@@ -368,18 +371,40 @@ PUT 仕様: VM Service の HTTP ルートへ `PUT`、ヘッダ `dev_fs_name: <fs
 **(d) HotReloadOrchestrator** — 反映の1サイクル。
 
 ```text
-FileWatcher が変更検知
+接続直後に1度だけ（初回同期）
+  ├ CompilerService.compile(mainUri)          … 完全な dill
+  ├ DevFSClient.writeAll({完全なdill})
+  ├ vmService.reloadSources(isolateId, rootLibUri: <DevFS上のdill>)
+  ├ 変更assetを1つ以上 DevFS へ置く
+  ├ _flutter.listViews → 各Viewへ _flutter.setAssetBundlePath(<DevFS>/build/flutter_assets/)
+  └ ext.flutter.reassemble(isolateId)
+
+以降、FileWatcher が変更検知するたびに
   └ debounce 50ms / 指紋変更なら中断してrebuild要求
       ├ CompilerService.recompile(invalidated)
       │    ├ errorCount > 0 → compileError を CLI と App の両方へ → 終了(rejectはしない)
       │    └ ok
       ├ DevFSClient.writeAll({差分dill, 変更asset})
-      ├ vmService.reloadSources(isolateId, rootLibUri: <DevFS上のfluse_main.dart>)
+      ├ vmService.reloadSources(isolateId, rootLibUri: <DevFS上のdill>)
       │    ├ success:false → CompilerService.reject() → notices を表示し中断
       │    └ success:true  → CompilerService.accept()
       ├ 変更assetごとに ext.flutter.evict(<archivePath>)
       └ ext.flutter.reassemble(isolateId)
 ```
+
+> **初回同期を飛ばしてはいけない**（Task 1.6 のスパイクで確定）。端末で動いているのは
+> APK 同梱の `kernel_blob.bin` であり、`frontend_server` セッションの「直前の状態」とは
+> 無関係。いきなり差分を送ると `reloadSources` が
+> `Error while starting Kernel isolate task` で拒否する。
+
+> **`rootLibUri` は DevFS 上に置いた dill の絶対 URI**。エントリポイントの URI ではない。
+> DevFS 上のファイル名は `main.dart.incremental.dill`（`lib/` は付かない）。
+
+> **asset の反映には `_flutter.setAssetBundlePath` が必要**（Task 1.6 のスパイクで確定）。
+> 端末のエンジンは既定で APK 内の `flutter_assets` しか見ないため、DevFS へ置いても
+> 参照されない。`evict` だけでは Dart は反映されるのに画像だけ古いまま、という
+> 分かりにくい状態になる。**ディレクトリの実体が無いと失敗する**ので、
+> 先に asset を1つ書き込んでから呼ぶこと。
 
 **(e) TunnelEndpoint** — サーバ側のトンネル終端。
 

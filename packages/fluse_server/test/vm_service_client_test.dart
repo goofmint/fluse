@@ -286,6 +286,94 @@ void main() {
     });
   });
 
+  group('listViews / setAssetDirectory', () {
+    test('views から viewId と isolateId を取り出す', () async {
+      stub.extensionResponse = <String, Object?>{
+        'type': 'FlutterViewList',
+        'views': <Object?>[
+          <String, Object?>{
+            'type': 'FlutterView',
+            'id': '_flutterView/0x1',
+            'isolate': <String, Object?>{'id': 'isolates/1'},
+          },
+        ],
+      };
+
+      final List<({String viewId, String? isolateId})> views = await client
+          .listViews();
+
+      expect(views.single.viewId, '_flutterView/0x1');
+      expect(views.single.isolateId, 'isolates/1');
+    });
+
+    test('isolate を持たない View も落とさない', () {
+      // Flutter View は isolate 無しで存在しうる。
+      stub.extensionResponse = <String, Object?>{
+        'type': 'FlutterViewList',
+        'views': <Object?>[
+          <String, Object?>{'type': 'FlutterView', 'id': '_flutterView/0x2'},
+        ],
+      };
+
+      expect(
+        client.listViews(),
+        completion(<({String viewId, String? isolateId})>[
+          (viewId: '_flutterView/0x2', isolateId: null),
+        ]),
+      );
+    });
+
+    test('isolate.id が文字列でなければ null として扱う', () async {
+      // as String? で潰すと TypeError が VmServiceException に変換されず
+      // そのまま呼び出し元へ抜ける。
+      stub.extensionResponse = <String, Object?>{
+        'type': 'FlutterViewList',
+        'views': <Object?>[
+          <String, Object?>{
+            'type': 'FlutterView',
+            'id': '_flutterView/0x3',
+            'isolate': <String, Object?>{'id': 12345},
+          },
+        ],
+      };
+
+      expect((await client.listViews()).single.isolateId, isNull);
+    });
+
+    test('views が無い応答は失敗させる', () async {
+      stub.extensionResponse = <String, Object?>{'type': 'Success'};
+
+      await expectLater(client.listViews(), throwsA(isA<VmServiceException>()));
+    });
+
+    test('setAssetBundlePath に viewId と assetDirectory を渡す', () async {
+      // これを呼ばないと asset の差し替えが反映されない（Task 1.6 で確認）。
+      await client.setAssetDirectory(
+        viewId: '_flutterView/0x1',
+        isolateId: 'isolates/1',
+        assetsDirectory: Uri.parse('file:///devfs/fluse/build/flutter_assets/'),
+      );
+
+      expect(stub.calls.single, contains('_flutter.setAssetBundlePath'));
+      expect(stub.calls.single, contains('_flutterView/0x1'));
+      expect(stub.calls.single, contains('isolates/1'));
+      expect(stub.calls.single, contains('/devfs/fluse/build/flutter_assets/'));
+    });
+
+    test('setAssetBundlePath の失敗は VmServiceException になる', () async {
+      stub.extensionError = StateError('Could not update asset directory.');
+
+      await expectLater(
+        client.setAssetDirectory(
+          viewId: '_flutterView/0x1',
+          isolateId: 'isolates/1',
+          assetsDirectory: Uri.parse('file:///devfs/'),
+        ),
+        throwsA(isA<VmServiceException>()),
+      );
+    });
+  });
+
   group('reassemble / evict', () {
     test('ext.flutter.reassemble を isolate 指定で呼ぶ', () async {
       await client.reassemble('isolates/1');

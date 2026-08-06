@@ -252,6 +252,76 @@ final class VmServiceClient implements VmServiceContract {
     _logger?.debug('reassemble しました');
   }
 
+  /// Flutter View の一覧を取る（`_flutter.listViews`）。
+  ///
+  /// 返るのは `viewId` と、その View が使う UI isolate の id の組。
+  /// [setAssetDirectory] に渡すために必要。
+  Future<List<({String viewId, String? isolateId})>> listViews() async {
+    final vm.Response response;
+    try {
+      response = await _service.callServiceExtension('_flutter.listViews');
+    } on Object catch (error) {
+      throw VmServiceException('_flutter.listViews に失敗しました', cause: error);
+    }
+
+    final Object? views = response.json?['views'];
+    if (views is! List) {
+      throw VmServiceException(
+        'listViews の応答に views がありません',
+        cause: response.json,
+      );
+    }
+
+    return <({String viewId, String? isolateId})>[
+      for (final Object? view in views)
+        if (view is Map && view['id'] is String)
+          (viewId: '${view['id']}', isolateId: _isolateIdOf(view)),
+    ];
+  }
+
+  /// View に紐づく isolate の id。取れなければ null。
+  ///
+  /// 型を確かめずに `as String?` で潰すと、想定外の値で [TypeError] が
+  /// 飛び、[VmServiceException] に変換されないまま呼び出し元へ抜ける。
+  static String? _isolateIdOf(Map<Object?, Object?> view) {
+    final Object? isolate = view['isolate'];
+    if (isolate is! Map) {
+      return null;
+    }
+    final Object? id = isolate['id'];
+    return id is String ? id : null;
+  }
+
+  /// DevFS 上の asset ディレクトリをエンジンに教える
+  /// （`_flutter.setAssetBundlePath`）。
+  ///
+  /// **これを呼ばないと asset の差し替えは反映されない。** 端末のエンジンは
+  /// 既定で APK 内の `flutter_assets` しか見ないため、DevFS へ置いても
+  /// 参照されない。flutter_tools も最初の asset 更新時に1度だけ呼ぶ
+  /// （`run_hot.dart:1190-1210`）。
+  Future<void> setAssetDirectory({
+    required String viewId,
+    required String? isolateId,
+    required Uri assetsDirectory,
+  }) async {
+    try {
+      await _service.callServiceExtension(
+        '_flutter.setAssetBundlePath',
+        isolateId: isolateId,
+        args: <String, Object?>{
+          'viewId': viewId,
+          'assetDirectory': assetsDirectory.toFilePath(),
+        },
+      );
+    } on Object catch (error) {
+      throw VmServiceException('setAssetBundlePath に失敗しました', cause: error);
+    }
+    _logger?.debug(
+      'asset ディレクトリを設定しました',
+      fields: <String, Object?>{'assetDirectory': '$assetsDirectory'},
+    );
+  }
+
   /// 画像キャッシュから [assetPath] を追い出す。
   ///
   /// asset を差し替えたときに呼ばないと、古い画像が表示され続ける。
