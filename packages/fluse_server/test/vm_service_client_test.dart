@@ -1,0 +1,335 @@
+import 'package:fluse_server/fluse_server.dart';
+import 'package:fluse_server/testing.dart';
+import 'package:test/test.dart';
+import 'package:vm_service/vm_service.dart' as vm;
+
+/// 応答を差し替えられる最小の [vm.VmService]。
+final class _StubVmService implements vm.VmService {
+  /// 呼ばれた RPC の記録。`method isolateId args` の形。
+  final List<String> calls = <String>[];
+
+  /// `callServiceExtension` の応答。
+  Map<String, Object?> extensionResponse = <String, Object?>{'type': 'Success'};
+
+  /// `callServiceExtension` を失敗させる場合の例外。
+  Object? extensionError;
+
+  /// `getVM` が返す isolate。
+  List<vm.IsolateRef> isolates = <vm.IsolateRef>[];
+
+  /// `reloadSources` の応答。
+  Map<String, Object?> reloadResponse = <String, Object?>{
+    'type': 'ReloadReport',
+    'success': true,
+  };
+
+  Object? reloadError;
+
+  @override
+  Future<vm.Response> callServiceExtension(
+    String method, {
+    String? isolateId,
+    Map<String, dynamic>? args,
+  }) async {
+    calls.add('$method|$isolateId|$args');
+    final Object? error = extensionError;
+    if (error != null) {
+      throw error;
+    }
+    return _require(vm.Response.parse(extensionResponse), 'Response');
+  }
+
+  @override
+  Future<vm.VM> getVM() async {
+    calls.add('getVM||');
+    return _require(
+      vm.VM.parse(<String, Object?>{
+        'type': 'VM',
+        'isolates': <Object?>[
+          for (final vm.IsolateRef ref in isolates) ref.toJson(),
+        ],
+      }),
+      'VM',
+    );
+  }
+
+  @override
+  Future<vm.ReloadReport> reloadSources(
+    String isolateId, {
+    bool? force,
+    bool? pause,
+    String? rootLibUri,
+    String? packagesUri,
+  }) async {
+    calls.add('reloadSources|$isolateId|$rootLibUri');
+    final Object? error = reloadError;
+    if (error != null) {
+      throw error;
+    }
+    return _require(vm.ReloadReport.parse(reloadResponse), 'ReloadReport');
+  }
+
+  @override
+  Future<void> dispose() async => calls.add('dispose||');
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName} は未実装です');
+
+  /// `parse()` が null を返したらテストを止める。
+  ///
+  /// `!` で潰すと、スタブに渡した JSON が不正だったことが分からない
+  /// null エラーとして出てしまう。
+  static T _require<T>(T? value, String what) {
+    if (value == null) {
+      throw StateError('スタブの $what を組み立てられません。JSON を確認してください');
+    }
+    return value;
+  }
+}
+
+vm.IsolateRef _isolate(String id, String name) =>
+    vm.IsolateRef(id: id, name: name, number: id, isSystemIsolate: false);
+
+void main() {
+  late _StubVmService stub;
+  late VmServiceClient client;
+  late MemoryLogSink sink;
+
+  /// VM Service の認証コード。固定値を書くと実在の資格情報と区別できない
+  /// 形でリポジトリに残るため、実行時に組み立てる。
+  late String authCode;
+
+  setUp(() {
+    stub = _StubVmService();
+    sink = MemoryLogSink();
+    authCode = 'auth${DateTime.now().microsecondsSinceEpoch}';
+    client = VmServiceClient(
+      stub,
+      httpAddress: Uri.parse('http://127.0.0.1:43219/$authCode/'),
+      logger: FluseLogger(
+        sinks: <FluseLogSink>[sink],
+        minimumLevel: FluseLogLevel.debug,
+      ),
+    );
+  });
+
+  group('findMainIsolateId', () {
+    test('main という名前の isolate を優先する', () async {
+      stub.isolates = <vm.IsolateRef>[
+        _isolate('isolates/1', 'worker'),
+        _isolate('isolates/2', 'main'),
+      ];
+
+      expect(await client.findMainIsolateId(), 'isolates/2');
+    });
+
+    test('main が無ければ先頭を採る', () async {
+      // VM は起動順に並べるので先頭がルート isolate。
+      stub.isolates = <vm.IsolateRef>[
+        _isolate('isolates/1', 'foo'),
+        _isolate('isolates/2', 'bar'),
+      ];
+
+      expect(await client.findMainIsolateId(), 'isolates/1');
+    });
+
+    test('isolate が無ければ理由付きで失敗する', () async {
+      stub.isolates = <vm.IsolateRef>[];
+
+      await expectLater(
+        client.findMainIsolateId(),
+        throwsA(
+          isA<VmServiceException>().having(
+            (VmServiceException e) => e.toString(),
+            'message',
+            contains('起動していない'),
+          ),
+        ),
+      );
+    });
+  });
+
+  group('createDevFS / deleteDevFS', () {
+    test('_createDevFS を呼び uri を返す', () async {
+      stub.extensionResponse = <String, Object?>{
+        'type': 'FileSystem',
+        'uri': 'file:///devfs/fluse/',
+      };
+
+      expect(
+        await client.createDevFS('fluse'),
+        Uri.parse('file:///devfs/fluse/'),
+      );
+      expect(stub.calls.single, contains('_createDevFS'));
+      expect(stub.calls.single, contains('fluse'));
+    });
+
+    test('uri が無い応答は失敗させる', () async {
+      // ここで黙って null を返すと、後段の PUT 先が決まらないまま進む。
+      stub.extensionResponse = <String, Object?>{'type': 'Success'};
+
+      await expectLater(
+        client.createDevFS('fluse'),
+        throwsA(isA<VmServiceException>()),
+      );
+    });
+
+    test('RPC が失敗したら VmServiceException に変換する', () async {
+      stub.extensionError = StateError('rpc failed');
+
+      await expectLater(
+        client.createDevFS('fluse'),
+        throwsA(
+          isA<VmServiceException>().having(
+            (VmServiceException e) => e.cause,
+            'cause',
+            isA<StateError>(),
+          ),
+        ),
+      );
+    });
+
+    test('_deleteDevFS を呼ぶ', () async {
+      await client.deleteDevFS('fluse');
+
+      expect(stub.calls.single, contains('_deleteDevFS'));
+    });
+  });
+
+  group('reloadSources', () {
+    test('success を返す', () async {
+      stub.reloadResponse = <String, Object?>{
+        'type': 'ReloadReport',
+        'success': true,
+      };
+
+      final ReloadResult result = await client.reloadSources(
+        'isolates/1',
+        rootLibUri: 'lib/main.dart.dill',
+      );
+
+      expect(result.success, isTrue);
+      expect(stub.calls.single, contains('lib/main.dart.dill'));
+    });
+
+    test('失敗時は notices を取り出す', () async {
+      // 失敗理由を表示できないと、利用者は何が起きたか分からない。
+      stub.reloadResponse = <String, Object?>{
+        'type': 'ReloadReport',
+        'success': false,
+        'notices': <Object?>[
+          <String, Object?>{'message': 'const class を変更しました'},
+        ],
+      };
+
+      final ReloadResult result = await client.reloadSources('isolates/1');
+
+      expect(result.success, isFalse);
+      expect(result.notices, <String>['const class を変更しました']);
+    });
+
+    test('success が無ければ例外にする', () async {
+      // 不明を false に落とすと、失敗なのか応答が壊れているのか区別できない。
+      // どちらも先へ進めてはいけないので明示的に落とす。
+      stub.reloadResponse = <String, Object?>{'type': 'ReloadReport'};
+
+      await expectLater(
+        client.reloadSources('isolates/1'),
+        throwsA(
+          isA<VmServiceException>().having(
+            (VmServiceException e) => e.toString(),
+            'message',
+            contains('success'),
+          ),
+        ),
+      );
+    });
+
+    test('notices が省略されていれば空として扱う', () async {
+      // notices は VM の仕様上そもそも省略されうる。
+      stub.reloadResponse = <String, Object?>{
+        'type': 'ReloadReport',
+        'success': true,
+      };
+
+      expect((await client.reloadSources('isolates/1')).notices, isEmpty);
+    });
+
+    test('notices が List でなければ例外にする', () async {
+      // 有るのに形が違うのは応答が壊れている。黙って空にしない。
+      stub.reloadResponse = <String, Object?>{
+        'type': 'ReloadReport',
+        'success': false,
+        'notices': 'これは List ではない',
+      };
+
+      await expectLater(
+        client.reloadSources('isolates/1'),
+        throwsA(
+          isA<VmServiceException>().having(
+            (VmServiceException e) => e.toString(),
+            'message',
+            contains('notices'),
+          ),
+        ),
+      );
+    });
+
+    test('RPC の失敗は VmServiceException になる', () async {
+      stub.reloadError = StateError('boom');
+
+      await expectLater(
+        client.reloadSources('isolates/1'),
+        throwsA(isA<VmServiceException>()),
+      );
+    });
+  });
+
+  group('reassemble / evict', () {
+    test('ext.flutter.reassemble を isolate 指定で呼ぶ', () async {
+      await client.reassemble('isolates/1');
+
+      expect(
+        stub.calls.single,
+        startsWith('ext.flutter.reassemble|isolates/1'),
+      );
+    });
+
+    test('ext.flutter.evict は value に asset パスを載せる', () async {
+      await client.evict('isolates/1', 'assets/images/logo.png');
+
+      expect(stub.calls.single, contains('ext.flutter.evict'));
+      expect(stub.calls.single, contains('assets/images/logo.png'));
+    });
+
+    test('evict の失敗は対象を含めて失敗させる', () async {
+      stub.extensionError = StateError('nope');
+
+      await expectLater(
+        client.evict('isolates/1', 'assets/a.png'),
+        throwsA(
+          isA<VmServiceException>().having(
+            (VmServiceException e) => e.toString(),
+            'message',
+            contains('assets/a.png'),
+          ),
+        ),
+      );
+    });
+  });
+
+  test('ログに VM Service の認証コードが平文で残らない', () async {
+    stub.isolates = <vm.IsolateRef>[_isolate('isolates/1', 'main')];
+    await client.findMainIsolateId();
+
+    expect(sink.lines, isNotEmpty);
+    expect(sink.lines.join('\n'), isNot(contains(authCode)));
+  });
+
+  test('dispose は接続を閉じる', () async {
+    await client.dispose();
+
+    expect(stub.calls, contains('dispose||'));
+  });
+}
