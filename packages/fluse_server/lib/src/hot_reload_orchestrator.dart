@@ -99,12 +99,27 @@ final class HotReloadOrchestrator {
        _vmService = vmService,
        _logger = logger;
 
-  /// 段の名前。[HotReloadResult.timings] のキー。
+  /// 差分コンパイルの段。[HotReloadResult.timings] のキー。
   static const String stageRecompile = 'recompile';
+
+  /// 差分 dill と asset を DevFS へ転送する段。
   static const String stageDevFsWrite = 'devfsWrite';
+
+  /// メイン isolate を特定する段。
+  ///
+  /// **キャッシュが空のときだけ現れる。** 2回目以降は解決済みの ID を
+  /// 使うため記録しない（毎回0msの段が並ぶとログのノイズになる）。
   static const String stageResolveIsolate = 'resolveIsolate';
+
+  /// `reloadSources` で差分を反映する段。
   static const String stageReload = 'reloadSources';
+
+  /// 変更 asset を画像キャッシュから追い出す段。
+  ///
+  /// 変更 asset が無ければ現れない。
   static const String stageEvict = 'evict';
+
+  /// ウィジェットツリーを作り直す段。
   static const String stageReassemble = 'reassemble';
 
   /// コンパイル対象のエントリポイント。
