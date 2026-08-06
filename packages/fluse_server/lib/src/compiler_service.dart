@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:path/path.dart' as p;
 import 'package:process/process.dart';
 
+import 'build_meta.dart';
 import 'compile_output.dart';
 import 'fluse_logger.dart';
 import 'frontend_server_protocol.dart';
@@ -42,6 +43,7 @@ final class CompilerService implements CompilerContract {
     this.dartDefines = const <String>[],
     this.fileSystemScheme = defaultFileSystemScheme,
     this.verbosity = 'error',
+    this.buildMetaPath,
     ProcessManager processManager = const LocalProcessManager(),
     FluseLogger? logger,
     Random? random,
@@ -92,6 +94,23 @@ final class CompilerService implements CompilerContract {
 
   /// `--verbosity`。
   final String verbosity;
+
+  /// `.flutter_preview/cache/build_meta.json` の場所。
+  ///
+  /// 指定すると [start] が**フラグの突合**を行う。`fluse init` の APK
+  /// ビルドと増分コンパイルでフラグが1つでも違うと `reloadSources` が
+  /// 静かに失敗する（設計 §10-1）ため、起動時に検出して止める。
+  ///
+  /// null の場合は突合しない。単体テストなど、APK ビルドを伴わない
+  /// 用途のため。
+  final String? buildMetaPath;
+
+  /// 現在の設定を [BuildMeta] として表したもの。
+  BuildMeta get buildMeta => BuildMeta(
+    trackWidgetCreation: trackWidgetCreation,
+    enableAsserts: enableAsserts,
+    dartDefines: dartDefines,
+  );
 
   final ProcessManager _processManager;
   final FluseLogger? _logger;
@@ -163,11 +182,16 @@ final class CompilerService implements CompilerContract {
   ];
 
   /// プロセスを起動する。
+  ///
+  /// [buildMetaPath] を指定している場合は、起動前にビルドフラグを突き合わせ、
+  /// 不一致なら [CompilerException] を投げる。読み込みの失敗も同じ型に
+  /// 揃えてある。
   Future<void> start() async {
     if (_process != null) {
       throw const CompilerException('すでに起動しています');
     }
 
+    _verifyBuildMeta();
     File(outputDill).parent.createSync(recursive: true);
 
     final Process process;
@@ -318,6 +342,41 @@ final class CompilerService implements CompilerContract {
       // 応答待ちのまま終了させられた呼び出し元を解放する。
       _failPending('shutdown により中断されました');
     }
+  }
+
+  /// 記録済みのビルドフラグと現在の設定を突き合わせる。
+  ///
+  /// 不一致は**静かな失敗の唯一の防波堤**なので、必ず起動を止める。
+  /// ここを通過させると「リロードしても画面が変わらない」だけの状態に
+  /// なり、原因の特定が極めて難しくなる。
+  void _verifyBuildMeta() {
+    final String? path = buildMetaPath;
+    if (path == null) {
+      return;
+    }
+
+    final BuildMeta recorded;
+    try {
+      recorded = BuildMeta.readFrom(File(path));
+    } on BuildMetaException catch (error) {
+      // 起動前検証の失敗は CompilerException に揃える。呼び出し元が
+      // 2種類の例外を捕まえ分ける必要が無いようにする。原因は元の
+      // メッセージをそのまま含める。
+      throw CompilerException('ビルドフラグの記録を読めません: ${error.message}');
+    }
+    final List<String> differences = recorded.differencesFrom(buildMeta);
+    if (differences.isEmpty) {
+      return;
+    }
+
+    throw CompilerException(
+      'APK のビルド時と増分コンパイルでフラグが一致しません。\n'
+      'このまま起動すると reloadSources が静かに失敗し、'
+      '「保存しても画面が変わらない」状態になります。\n'
+      '  ${differences.join('\n  ')}\n'
+      '`fluse rebuild` で APK を作り直してください。\n'
+      '  build_meta: $path',
+    );
   }
 
   // --------------------------------------------------------------- internals

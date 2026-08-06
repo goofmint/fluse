@@ -5,6 +5,8 @@
 /// 反映経路そのものの実装は Task 1.2 以降で追加する。
 library;
 
+export 'src/build_meta.dart';
+export 'src/build_meta_parser.dart';
 export 'src/compile_output.dart';
 export 'src/compiler_service.dart';
 export 'src/dev_fs_client.dart';
