@@ -15,6 +15,8 @@ dependencies:
   # 外部プロセス（flutter / adb / keytool / frontend_server）の抽象。
   # flutter_tools も同じパッケージを使っている。
   process: ^5.0.5
+  # VM Service の RPC。DevFS の作成と reloadSources に使う。
+  vm_service: ^15.0.2
 
 dev_dependencies:
   # 実 frontend_server に対する統合テストで SDK を解決するためだけに使う。

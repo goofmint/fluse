@@ -7,7 +7,9 @@ library;
 
 export 'src/compile_output.dart';
 export 'src/compiler_service.dart';
+export 'src/dev_fs_client.dart';
 export 'src/fluse_logger.dart';
 export 'src/frontend_server_protocol.dart';
 export 'src/process_manager.dart';
 export 'src/redact.dart';
+export 'src/vm_service_client.dart';
