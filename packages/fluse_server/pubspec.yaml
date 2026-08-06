@@ -10,6 +10,8 @@ environment:
 resolution: workspace
 
 dependencies:
+  # 通信契約。トンネルフレームと制御メッセージの定義。
+  fluse_protocol: ^0.1.0
   # パス結合とプロジェクト相対パスの算出。
   path: ^1.9.0
   # 外部プロセス（flutter / adb / keytool / frontend_server）の抽象。
