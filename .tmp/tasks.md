@@ -252,6 +252,10 @@
 
 #### Task 3.5: サーバ統合（接続 → ready → reload）
 
+> **接続直後の初回同期を必ず入れること**（Task 1.6 のスパイクで判明）。完全な dill の
+> 転送と `reloadSources`、`_flutter.setAssetBundlePath` の登録を `ready` を返す前に
+> 済ませる。飛ばすと最初の保存が必ず失敗する。設計 §2.2.3(d) を参照。
+
 - [ ] 設計 §3.1 の接続シーケンスを実装（hello → accept → vmServiceReady → tunnel → createDevFS → 初回同期 → ready）
 - [ ] `HotReloadOrchestrator` を FileWatcher と接続
 - [ ] 切断時のリソース解放（DevFS破棄 / トンネル終了 / CompilerService は維持）
