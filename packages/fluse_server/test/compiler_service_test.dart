@@ -158,6 +158,159 @@ void main() {
     });
   });
 
+  group('build_meta の突合', () {
+    /// 記録済みの build_meta を書き出す。
+    String writeBuildMeta({
+      bool trackWidgetCreation = true,
+      bool enableAsserts = true,
+      List<String> dartDefines = const <String>['FLUTTER_VERSION=3.41.9'],
+    }) {
+      final File file = File(p.join(temp.path, 'cache', 'build_meta.json'));
+      BuildMeta(
+        trackWidgetCreation: trackWidgetCreation,
+        enableAsserts: enableAsserts,
+        dartDefines: dartDefines,
+      ).writeTo(file);
+      return file.path;
+    }
+
+    CompilerService serviceWith({
+      required String buildMetaPath,
+      bool trackWidgetCreation = true,
+      bool enableAsserts = true,
+      List<String> dartDefines = const <String>['FLUTTER_VERSION=3.41.9'],
+    }) => CompilerService(
+      dartAotRuntime: '/sdk/bin/dartaotruntime',
+      frontendServerSnapshot: '/sdk/frontend_server_aot.dart.snapshot',
+      patchedSdkRoot: '/sdk/flutter_patched_sdk',
+      projectRoot: projectRoot,
+      outputDill: outputDill,
+      packagesPath: p.join(projectRoot, '.dart_tool', 'package_config.json'),
+      trackWidgetCreation: trackWidgetCreation,
+      enableAsserts: enableAsserts,
+      dartDefines: dartDefines,
+      buildMetaPath: buildMetaPath,
+      processManager: processManager,
+      random: fixedRandom,
+    );
+
+    test('一致していれば起動する', () async {
+      final CompilerService target = serviceWith(
+        buildMetaPath: writeBuildMeta(),
+      );
+      processManager.registerStart(target.commandLine);
+
+      await target.start();
+
+      expect(target.isRunning, isTrue);
+      await target.shutdown();
+    });
+
+    test('--track-widget-creation の不一致で起動を止める', () async {
+      // 一致していないと reloadSources が静かに失敗する（設計 §10-1）。
+      final CompilerService target = serviceWith(
+        buildMetaPath: writeBuildMeta(),
+        trackWidgetCreation: false,
+      );
+
+      await expectLater(
+        target.start(),
+        throwsA(
+          isA<CompilerException>().having(
+            (CompilerException e) => e.toString(),
+            'message',
+            allOf(
+              contains('--track-widget-creation'),
+              contains('記録=true'),
+              contains('現在=false'),
+              contains('fluse rebuild'),
+            ),
+          ),
+        ),
+      );
+      expect(target.isRunning, isFalse);
+    });
+
+    test('--enable-asserts の不一致で起動を止める', () async {
+      final CompilerService target = serviceWith(
+        buildMetaPath: writeBuildMeta(),
+        enableAsserts: false,
+      );
+
+      await expectLater(
+        target.start(),
+        throwsA(
+          isA<CompilerException>().having(
+            (CompilerException e) => e.toString(),
+            'message',
+            contains('--enable-asserts'),
+          ),
+        ),
+      );
+    });
+
+    test('-D の不一致で起動を止める', () async {
+      final CompilerService target = serviceWith(
+        buildMetaPath: writeBuildMeta(),
+        dartDefines: <String>['FLUTTER_VERSION=3.41.9', 'EXTRA=1'],
+      );
+
+      await expectLater(
+        target.start(),
+        throwsA(
+          isA<CompilerException>().having(
+            (CompilerException e) => e.toString(),
+            'message',
+            contains('-D'),
+          ),
+        ),
+      );
+    });
+
+    test('build_meta.json が無ければ init を案内する', () async {
+      final CompilerService target = serviceWith(
+        buildMetaPath: p.join(temp.path, 'cache', 'missing.json'),
+      );
+
+      await expectLater(
+        target.start(),
+        throwsA(
+          isA<BuildMetaException>().having(
+            (BuildMetaException e) => e.toString(),
+            'message',
+            contains('fluse init'),
+          ),
+        ),
+      );
+    });
+
+    test('build_meta.json を壊すと起動しない', () async {
+      // 完了条件: 意図的に改変すると起動が失敗し、原因が明示される。
+      final File file = File(p.join(temp.path, 'cache', 'build_meta.json'))
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('{ 壊れた JSON');
+      final CompilerService target = serviceWith(buildMetaPath: file.path);
+
+      await expectLater(
+        target.start(),
+        throwsA(
+          isA<BuildMetaException>().having(
+            (BuildMetaException e) => e.toString(),
+            'message',
+            contains(file.path),
+          ),
+        ),
+      );
+    });
+
+    test('buildMetaPath を渡さなければ突合しない', () async {
+      // APK ビルドを伴わない単体テスト用の経路。
+      await startService();
+
+      expect(service.isRunning, isTrue);
+    });
+  });
+
   group('start / shutdown', () {
     test('起動すると出力先の親ディレクトリを作る', () async {
       await startService();
