@@ -12,6 +12,7 @@
 //        --project <counter_app のパス>
 //
 // 反映が確認できたら GO、できなければ設計に戻る。
+import 'dart:async';
 import 'dart:io';
 
 import 'package:fluse_builder/fluse_builder.dart';
@@ -60,8 +61,12 @@ Future<int> main(List<String> args) async {
 
   CompilerService? compiler;
   DevFSClient? devFS;
+  int exitCode;
+  Object? failure;
+  StackTrace? failureTrace;
+
   try {
-    return await _run(
+    exitCode = await _run(
       vmService: vmService,
       sdk: sdk,
       logger: logger,
@@ -72,14 +77,39 @@ Future<int> main(List<String> args) async {
       onCompiler: (CompilerService c) => compiler = c,
       onDevFS: (DevFSClient d) => devFS = d,
     );
-  } finally {
-    // 例外経路でも必ず解放する。DevFS を残すと端末側にゴミが溜まり、
-    // frontend_server を残すとプロセスが居座る。
-    await _releaseQuietly('DevFS の削除', () => devFS?.destroy());
-    devFS?.close();
-    await _releaseQuietly('frontend_server の停止', () => compiler?.shutdown());
-    await _releaseQuietly('VM Service の切断', vmService.dispose);
+  } on Object catch (error, stackTrace) {
+    exitCode = 70;
+    failure = error;
+    failureTrace = stackTrace;
   }
+
+  // 例外経路でも必ず解放する。DevFS を残すと端末側にゴミが溜まり、
+  // frontend_server を残すとプロセスが居座る。1つが失敗しても残りは続ける。
+  final List<String> cleanupErrors = <String>[
+    ...await _release('DevFS の削除', () => devFS?.destroy()),
+    ...await _release('HTTP 接続の解放', () async => devFS?.close()),
+    ...await _release('frontend_server の停止', () => compiler?.shutdown()),
+    ...await _release('VM Service の切断', vmService.dispose),
+  ];
+
+  if (failure != null) {
+    // 本来の失敗を優先して見せる。後始末の失敗で原因を隠さない。
+    for (final String error in cleanupErrors) {
+      stderr.writeln('  $error');
+    }
+    Error.throwWithStackTrace(failure, failureTrace ?? StackTrace.current);
+  }
+
+  if (cleanupErrors.isNotEmpty) {
+    // 後始末に失敗したまま成功を返すと、端末に DevFS が残ったことに
+    // 気づけない。成功していても非ゼロで返す。
+    for (final String error in cleanupErrors) {
+      stderr.writeln('  $error');
+    }
+    return exitCode == 0 ? 70 : exitCode;
+  }
+
+  return exitCode;
 }
 
 /// 本体。解放は呼び出し元の finally が受け持つ。
@@ -269,26 +299,40 @@ String? _validateAssetPath(String? assetPath, String projectRoot) {
   if (p.isAbsolute(assetPath)) {
     throw ArgumentError.value(assetPath, '--asset', 'プロジェクト相対で指定してください');
   }
-  final String resolved = p.normalize(p.join(projectRoot, assetPath));
-  if (!p.isWithin(projectRoot, resolved)) {
+
+  final String candidate = p.normalize(p.join(projectRoot, assetPath));
+  final File file = File(candidate);
+  if (!file.existsSync()) {
+    throw ArgumentError.value(assetPath, '--asset', 'ファイルがありません: $candidate');
+  }
+
+  // **シンボリックリンクを解決してから包含関係を見る。** パス文字列だけの
+  // 判定では、プロジェクト内に置かれた外部を指すリンクを通してしまう。
+  final String resolvedRoot = Directory(projectRoot).resolveSymbolicLinksSync();
+  final String resolvedFile = file.resolveSymbolicLinksSync();
+  if (!p.isWithin(resolvedRoot, resolvedFile)) {
     throw ArgumentError.value(
       assetPath,
       '--asset',
-      'プロジェクト外は指定できません: $resolved',
+      'プロジェクト外は指定できません: $resolvedFile',
     );
   }
-  return p.relative(resolved, from: projectRoot);
+
+  // 呼び出し側は `File(p.join(projectRoot, assetPath))` で開くので、
+  // 元の projectRoot からの相対で返す。
+  return p.relative(candidate, from: projectRoot);
 }
 
 /// 解放処理を、失敗しても他の解放を止めないように包む。
-Future<void> _releaseQuietly(
+Future<List<String>> _release(
   String what,
-  Future<void>? Function() action,
+  FutureOr<void> Function() action,
 ) async {
   try {
     await action();
+    return const <String>[];
   } on Object catch (error) {
-    stderr.writeln('  $what に失敗しました: $error');
+    return <String>['$what に失敗しました: $error'];
   }
 }
 
