@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'fluse_logger.dart';
+import 'reload_contracts.dart';
 import 'vm_service_client.dart';
 
 /// DevFS への転送に失敗したときに投げる。
@@ -42,7 +43,7 @@ final class DevFSContent {
 /// **同時実行3固定・60秒タイムアウト・最大10回リトライは仕様であって
 /// 調整可能なチューニングではない。** `request.close()` が応答を返さない
 /// dart-lang/sdk#43525 を回避するための構成なので、緩めてはいけない。
-final class DevFSClient {
+final class DevFSClient implements DevFSWriterContract {
   DevFSClient({
     required VmServiceClient vmService,
     FluseLogger? logger,
@@ -169,6 +170,7 @@ final class DevFSClient {
   /// 1件でも最終的に失敗したら [DevFSException] を投げる。部分的に
   /// 書けた状態で成功を返すと、端末側の kernel と食い違ったまま
   /// `reloadSources` に進んでしまう。
+  @override
   Future<void> writeAll(Map<Uri, DevFSContent> entries) async {
     final String? name = _fsName;
     if (name == null) {

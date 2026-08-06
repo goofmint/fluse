@@ -1,0 +1,346 @@
+import 'dart:io';
+
+import 'compile_output.dart';
+import 'dev_fs_client.dart';
+import 'fluse_logger.dart';
+import 'reload_contracts.dart';
+import 'vm_service_client.dart';
+
+/// 1サイクルの結果。
+enum HotReloadStatus {
+  /// 反映まで通った。
+  success,
+
+  /// コンパイルエラーで中断した。`accept` も `reject` も送っていない。
+  compileError,
+
+  /// `reloadSources` が受理しなかった。`reject` を送って中断した。
+  reloadFailure,
+}
+
+/// 転送して evict する asset 1件。
+///
+/// DevFS 上のパス解決は呼び出し側（Task 3.4 の `AssetBundleService`）の
+/// 責務。ここでは解決済みのものを受け取る。
+final class ChangedAsset {
+  const ChangedAsset({
+    required this.deviceUri,
+    required this.content,
+    required this.archivePath,
+  });
+
+  /// DevFS 上の書き込み先。
+  final Uri deviceUri;
+
+  final DevFSContent content;
+
+  /// `ext.flutter.evict` に渡すパス。`assets/images/logo.png` の形。
+  final String archivePath;
+}
+
+/// [HotReloadOrchestrator.reload] の結果。
+final class HotReloadResult {
+  const HotReloadResult({
+    required this.status,
+    required this.summary,
+    required this.timings,
+    this.diagnostics = const <DiagnosticEntry>[],
+    this.notices = const <String>[],
+  });
+
+  final HotReloadStatus status;
+
+  /// CLI に出す1行サマリ。
+  final String summary;
+
+  /// 各段の所要時間（ミリ秒）。段の名前は [HotReloadOrchestrator] の
+  /// `stage*` 定数と対応する。
+  final Map<String, int> timings;
+
+  /// コンパイル診断。[HotReloadStatus.compileError] のときに入る。
+  final List<DiagnosticEntry> diagnostics;
+
+  /// VM が返した補足。[HotReloadStatus.reloadFailure] のときに入る。
+  final List<String> notices;
+
+  bool get isSuccess => status == HotReloadStatus.success;
+
+  /// 全段の合計時間。
+  int get totalMs => timings.values.fold(0, (int sum, int ms) => sum + ms);
+
+  @override
+  String toString() => 'HotReloadResult($status, ${totalMs}ms): $summary';
+}
+
+/// 反映の1サイクル（設計 §2.2.3(d)）。
+///
+/// **`accept` と `reject` の使い分けがこのクラスの核心**（設計 §10-2）。
+///
+/// | 経路 | 送るもの |
+/// |---|---|
+/// | コンパイルエラー | **どちらも送らない**。次回の recompile が同じ差分を再送する |
+/// | reload 失敗 | **必ず `reject`**。送らないと差分が「送信済み」のまま残る |
+/// | 成功 | `accept` |
+///
+/// reload 失敗時に `accept` を送ると `frontend_server` が「送信済み」と
+/// 誤認し、以降そのファイルの差分が二度と送られなくなる。再現性が低く
+/// デバッグが極めて困難な不具合になる。
+final class HotReloadOrchestrator {
+  HotReloadOrchestrator({
+    required CompilerContract compiler,
+    required DevFSWriterContract devFS,
+    required VmServiceContract vmService,
+    required this.mainUri,
+    required this.dillDeviceUri,
+    required this.rootLibUri,
+    FluseLogger? logger,
+  }) : _compiler = compiler,
+       _devFS = devFS,
+       _vmService = vmService,
+       _logger = logger;
+
+  /// 差分コンパイルの段。[HotReloadResult.timings] のキー。
+  static const String stageRecompile = 'recompile';
+
+  /// 差分 dill と asset を DevFS へ転送する段。
+  static const String stageDevFsWrite = 'devfsWrite';
+
+  /// メイン isolate を特定する段。
+  ///
+  /// **キャッシュが空のときだけ現れる。** 2回目以降は解決済みの ID を
+  /// 使うため記録しない（毎回0msの段が並ぶとログのノイズになる）。
+  static const String stageResolveIsolate = 'resolveIsolate';
+
+  /// `reloadSources` で差分を反映する段。
+  static const String stageReload = 'reloadSources';
+
+  /// 変更 asset を画像キャッシュから追い出す段。
+  ///
+  /// 変更 asset が無ければ現れない。
+  static const String stageEvict = 'evict';
+
+  /// ウィジェットツリーを作り直す段。
+  static const String stageReassemble = 'reassemble';
+
+  /// コンパイル対象のエントリポイント。
+  final Uri mainUri;
+
+  /// 差分 dill を DevFS のどこに置くか。
+  final Uri dillDeviceUri;
+
+  /// `reloadSources` に渡す `rootLibUri`。DevFS 上の `fluse_main.dart`。
+  final String rootLibUri;
+
+  final CompilerContract _compiler;
+  final DevFSWriterContract _devFS;
+  final VmServiceContract _vmService;
+  final FluseLogger? _logger;
+
+  /// 一度特定した isolate は使い回す。毎回 `getVM` を投げると遅い。
+  String? _isolateId;
+
+  /// キャッシュ済みの isolate を捨てる。
+  ///
+  /// Hot Restart の後など、isolate が作り直された場合に呼ぶ。
+  void invalidateIsolate() => _isolateId = null;
+
+  /// 1サイクル回す。
+  Future<HotReloadResult> reload({
+    required List<Uri> invalidated,
+    List<ChangedAsset> changedAssets = const <ChangedAsset>[],
+  }) async {
+    final Map<String, int> timings = <String, int>{};
+
+    // --- 1. 差分コンパイル -------------------------------------------------
+    final CompileOutput compiled = await _measure(
+      stageRecompile,
+      timings,
+      () => _compiler.recompile(mainUri, invalidated),
+    );
+
+    if (compiled.hasErrors) {
+      // accept も reject も送らない。差分は未確定のまま残り、
+      // 次回の recompile が同じ内容を再送する。
+      _logger?.warn(
+        'コンパイルエラーのため中断しました',
+        fields: <String, Object?>{
+          'errorCount': compiled.errorCount,
+          ...timings,
+        },
+      );
+      return HotReloadResult(
+        status: HotReloadStatus.compileError,
+        summary: compiled.summary,
+        timings: timings,
+        diagnostics: compiled.diagnostics,
+      );
+    }
+
+    // --- 2. DevFS へ転送 ---------------------------------------------------
+    final File? dill = compiled.incrementalDill;
+    if (dill == null) {
+      // 差分が無い応答。転送するものが無いので反映もしない。
+      // **確認は必ず解決しておく。** 未解決のまま残すと、この差分が
+      // 「適用済みでも未送信でもない」宙ぶらりんの状態になる。
+      // 適用していないので reject を送る（設計 §10-2 が警告するのは
+      // 「適用していないのに accept する」ほうであり、その逆は安全）。
+      await _rejectIfPending();
+      _logger?.debug('差分 dill が無いため転送をスキップしました');
+      return HotReloadResult(
+        status: HotReloadStatus.success,
+        summary: '変更はありません',
+        timings: timings,
+      );
+    }
+
+    // ここから accept までの間に例外が出た場合、確認が未解決のまま
+    // 呼び出し元へ抜けてしまう。その差分は次回の recompile に含まれず、
+    // 変更が永久に反映されなくなる。必ず reject してから投げ直す。
+    final ReloadResult reloaded;
+    final String isolateId;
+    try {
+      await _measure(stageDevFsWrite, timings, () async {
+        await _devFS.writeAll(<Uri, DevFSContent>{
+          dillDeviceUri: DevFSContent.fromFile(dill),
+          for (final ChangedAsset asset in changedAssets)
+            asset.deviceUri: asset.content,
+        });
+      });
+
+      // --- 3. reloadSources ------------------------------------------------
+      // 解決済みなら計測しない。キャッシュヒットを段として記録すると
+      // 「毎回0ms の段がある」ノイズになる。
+      final String? cached = _isolateId;
+      isolateId =
+          cached ??
+          await _measure(
+            stageResolveIsolate,
+            timings,
+            () async => _isolateId = await _vmService.findMainIsolateId(),
+          );
+
+      reloaded = await _measure(
+        stageReload,
+        timings,
+        () => _vmService.reloadSources(isolateId, rootLibUri: rootLibUri),
+      );
+    } on Object catch (error, stackTrace) {
+      final String failedStage = _lastStage(timings);
+      // 後始末の失敗で元の原因を隠さない。reject が投げても、返すべきは
+      // DevFS / isolate / reloadSources の例外のほう。
+      Object? cleanupError;
+      try {
+        await _rejectIfPending();
+      } on Object catch (rejectError) {
+        cleanupError = rejectError;
+      }
+      _logger?.error(
+        'ホットリロードが失敗しました',
+        fields: <String, Object?>{
+          'failedStage': failedStage,
+          'error': '$error',
+          if (cleanupError != null) 'cleanupError': '$cleanupError',
+          ...timings,
+        },
+      );
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+
+    if (!reloaded.success) {
+      // 必ず reject する。送らないと差分が「送信済み」のまま残り、
+      // 次回の recompile に含まれなくなる。
+      await _compiler.reject();
+      _logger?.warn(
+        'reloadSources が受理されませんでした',
+        fields: <String, Object?>{'notices': reloaded.notices, ...timings},
+      );
+      return HotReloadResult(
+        status: HotReloadStatus.reloadFailure,
+        summary: 'リロードが受理されませんでした',
+        timings: timings,
+        notices: reloaded.notices,
+      );
+    }
+
+    _compiler.accept();
+
+    // --- 4. asset の evict -------------------------------------------------
+    // ここから先は accept 済みなので reject できない。失敗しても
+    // 計測値だけは残す。どの段で落ちたかが分からないと切り分けできない。
+    try {
+      if (changedAssets.isNotEmpty) {
+        await _measure(stageEvict, timings, () async {
+          for (final ChangedAsset asset in changedAssets) {
+            await _vmService.evict(isolateId, asset.archivePath);
+          }
+        });
+      }
+
+      // --- 5. reassemble ---------------------------------------------------
+      await _measure(
+        stageReassemble,
+        timings,
+        () => _vmService.reassemble(isolateId),
+      );
+    } on Object catch (error, stackTrace) {
+      _logger?.error(
+        'ホットリロードが失敗しました',
+        fields: <String, Object?>{
+          'failedStage': _lastStage(timings),
+          'error': '$error',
+          ...timings,
+        },
+      );
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+
+    final HotReloadResult result = HotReloadResult(
+      status: HotReloadStatus.success,
+      summary: '反映しました',
+      timings: timings,
+    );
+
+    _logger?.info(
+      'ホットリロードが完了しました',
+      fields: <String, Object?>{
+        'files': invalidated.length,
+        'assets': changedAssets.length,
+        'totalMs': result.totalMs,
+        ...timings,
+      },
+    );
+    return result;
+  }
+
+  /// 確認待ちなら [CompilerContract.reject] を送る。
+  ///
+  /// 適用していない差分を確認待ちのまま残すと、次回の recompile に
+  /// 含まれなくなる。
+  Future<void> _rejectIfPending() async {
+    if (_compiler.needsConfirmation) {
+      await _compiler.reject();
+    }
+  }
+
+  /// 最後に計測を開始した段。例外が出た段を指す。
+  static String _lastStage(Map<String, int> timings) =>
+      timings.keys.isEmpty ? '(なし)' : timings.keys.last;
+
+  /// [action] の所要時間を [timings] に記録する。
+  ///
+  /// 例外が出た場合も記録する。どの段で落ちたかが分からないと
+  /// 原因の切り分けができない。
+  Future<T> _measure<T>(
+    String stage,
+    Map<String, int> timings,
+    Future<T> Function() action,
+  ) async {
+    final Stopwatch stopwatch = Stopwatch()..start();
+    try {
+      return await action();
+    } finally {
+      stopwatch.stop();
+      timings[stage] = stopwatch.elapsedMilliseconds;
+    }
+  }
+}

@@ -9,6 +9,7 @@ import 'package:process/process.dart';
 import 'compile_output.dart';
 import 'fluse_logger.dart';
 import 'frontend_server_protocol.dart';
+import 'reload_contracts.dart';
 
 /// `frontend_server` の起動・駆動に失敗したときに投げる。
 final class CompilerException implements Exception {
@@ -28,7 +29,7 @@ final class CompilerException implements Exception {
 /// **`accept` と `reject` を絶対に取り違えないこと**（設計 §10-2）。
 /// reload 失敗時に `accept` を送ると `frontend_server` が「送信済み」と
 /// 誤認し、以降そのファイルの差分が二度と送られなくなる。
-final class CompilerService {
+final class CompilerService implements CompilerContract {
   CompilerService({
     required this.dartAotRuntime,
     required this.frontendServerSnapshot,
@@ -117,6 +118,7 @@ final class CompilerService {
   bool get isRunning => _process != null && _exitCode == null;
 
   /// `accept` / `reject` の応答待ちかどうか。
+  @override
   bool get needsConfirmation => _needsConfirmation;
 
   /// 起動コマンド。
@@ -227,6 +229,7 @@ final class CompilerService {
   ///
   /// [invalidated] には前回から変更されたファイルを渡す。空でもよい
   /// （その場合 `frontend_server` は差分なしの dill を返す）。
+  @override
   Future<CompileOutput> recompile(
     Uri mainUri,
     List<Uri> invalidated, {
@@ -254,6 +257,7 @@ final class CompilerService {
   /// reload が成功したことを伝える。応答は返らない。
   ///
   /// **失敗時にこれを呼んではいけない**（設計 §10-2）。
+  @override
   void accept() {
     if (!_needsConfirmation) {
       return;
@@ -267,6 +271,7 @@ final class CompilerService {
   ///
   /// `frontend_server` は差分を「未送信」に戻すので、次回の
   /// [recompile] が同じ差分を再送する。応答が1つ返る。
+  @override
   Future<CompileOutput?> reject({Duration timeout = defaultCompileTimeout}) {
     return _enqueue(() async {
       if (!_needsConfirmation) {
