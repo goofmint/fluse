@@ -212,8 +212,21 @@ final class VmServiceClient {
       throw VmServiceException('reloadSources に失敗しました', cause: error);
     }
 
-    final bool success = report.success ?? false;
-    final List<String> notices = _extractNotices(report.json);
+    // `report.success` は見ない。vm_service が `json['success'] ?? false`
+    // で埋めてしまうため（vm_service.dart:7426）、応答に success が無い
+    // ケースと「失敗した」ケースを区別できない。生の JSON を見る。
+    final Map<String, Object?>? json = report.json;
+    final Object? rawSuccess = json?['success'];
+    if (rawSuccess is! bool) {
+      // 不明を false に落とすと「失敗したのか応答が壊れているのか」が
+      // 区別できない。どちらも先へ進めてはいけないので明示的に落とす。
+      throw VmServiceException(
+        'reloadSources の応答に success がありません',
+        cause: json,
+      );
+    }
+    final bool success = rawSuccess;
+    final List<String> notices = _extractNotices(json);
 
     _logger?.debug(
       'reloadSources の結果',
@@ -261,12 +274,19 @@ final class VmServiceClient {
 
   /// `ReloadReport` の JSON から補足メッセージを取り出す。
   ///
-  /// 形は VM のバージョンで変わりうるので、取れなければ空にする。
-  /// ここで例外を出すと、失敗理由を表示する経路そのものが壊れる。
+  /// `notices` は VM の仕様上そもそも省略されうるので、無い場合は空に
+  /// する。ただし**有るのに List でない場合は応答が壊れている**ので、
+  /// 黙って空にせず落とす。
   static List<String> _extractNotices(Map<String, Object?>? json) {
-    final Object? notices = json?['notices'];
-    if (notices is! List) {
+    if (json == null || !json.containsKey('notices')) {
       return const <String>[];
+    }
+    final Object? notices = json['notices'];
+    if (notices is! List) {
+      throw VmServiceException(
+        'reloadSources の notices を解釈できません',
+        cause: notices,
+      );
     }
     return <String>[
       for (final Object? notice in notices)

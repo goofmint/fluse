@@ -94,7 +94,21 @@ final class _ReceivedRequest {
   final Map<String, List<String>> headers;
   final List<int> body;
 
-  String? header(String name) => headers[name.toLowerCase()]?.firstOrNull;
+  /// ヘッダを1つ取り出す。無ければテストを止める。
+  ///
+  /// `!` で潰すと「ヘッダが無い」ことが null エラーとして出てしまい、
+  /// 失敗の理由が読めなくなる。
+  String requireHeader(String name) {
+    final String? value = headers[name.toLowerCase()]?.firstOrNull;
+    if (value == null) {
+      throw StateError('ヘッダ $name がリクエストにありません: ${headers.keys.toList()}');
+    }
+    return value;
+  }
+
+  /// ヘッダの有無だけを見る。
+  String? optionalHeader(String name) =>
+      headers[name.toLowerCase()]?.firstOrNull;
 }
 
 /// `_createDevFS` / `_deleteDevFS` にだけ答える最小の [vm.VmService]。
@@ -123,6 +137,15 @@ void main() {
   late _DummyDevFsServer server;
   DevFSClient? client;
   late _FakeVmService fakeVm;
+
+  /// マップからヘッダを取り出す。無ければテストを止める。
+  String requireEntry(Map<String, String> headers, String name) {
+    final String? value = headers[name];
+    if (value == null) {
+      throw StateError('$name が生成されていません: ${headers.keys.toList()}');
+    }
+    return value;
+  }
 
   Future<DevFSClient> buildClient({
     int maxInFlight = DevFSClient.defaultMaxInFlight,
@@ -162,7 +185,7 @@ void main() {
 
       expect(headers['dev_fs_name'], 'fluse');
       expect(
-        utf8.decode(base64.decode(headers['dev_fs_uri_b64']!)),
+        utf8.decode(base64.decode(requireEntry(headers, 'dev_fs_uri_b64'))),
         'lib/main.dart.incremental.dill',
       );
     });
@@ -178,7 +201,7 @@ void main() {
       );
 
       final String decoded = utf8.decode(
-        base64.decode(headers['dev_fs_uri_b64']!),
+        base64.decode(requireEntry(headers, 'dev_fs_uri_b64')),
       );
       expect(decoded, 'assets/%E7%94%BB%E5%83%8F.png');
       expect(Uri.decodeFull(decoded), 'assets/画像.png');
@@ -201,42 +224,46 @@ void main() {
 
   group('create / destroy', () {
     test('createDevFS を呼びベース URI を返す', () async {
-      client = await buildClient();
+      final DevFSClient built = await buildClient();
+      client = built;
 
-      expect(client?.fsName, 'fluse');
-      expect(client?.baseUri, Uri.parse('file:///devfs/fluse/'));
+      expect(built.fsName, 'fluse');
+      expect(built.baseUri, Uri.parse('file:///devfs/fluse/'));
       expect(fakeVm.calls, contains('_createDevFS fluse'));
     });
 
     test('二重の create は拒否する', () async {
-      client = await buildClient();
+      final DevFSClient built = await buildClient();
+      client = built;
 
       await expectLater(
-        client!.create('another'),
+        built.create('another'),
         throwsA(isA<DevFSException>()),
       );
     });
 
     test('destroy は deleteDevFS を呼び、二重呼び出しでも安全', () async {
-      client = await buildClient();
+      final DevFSClient built = await buildClient();
+      client = built;
 
-      await client!.destroy();
-      await client!.destroy();
+      await built.destroy();
+      await built.destroy();
 
       expect(
         fakeVm.calls.where((String c) => c.startsWith('_deleteDevFS')),
         hasLength(1),
       );
-      expect(client?.fsName, isNull);
+      expect(built.fsName, isNull);
     });
 
     test('create 前の writeAll は明確に失敗する', () async {
-      client = DevFSClient(
+      final DevFSClient built = DevFSClient(
         vmService: VmServiceClient(fakeVm, httpAddress: server.uri),
       );
+      client = built;
 
       await expectLater(
-        client!.writeAll(<Uri, DevFSContent>{
+        built.writeAll(<Uri, DevFSContent>{
           Uri.parse('a.dill'): DevFSContent.fromString('x'),
         }),
         throwsA(isA<DevFSException>()),
@@ -246,18 +273,19 @@ void main() {
 
   group('PUT の内容', () {
     test('PUT で gzip したボディとヘッダを送る', () async {
-      client = await buildClient();
+      final DevFSClient built = await buildClient();
+      client = built;
 
-      await client!.writeAll(<Uri, DevFSContent>{
+      await built.writeAll(<Uri, DevFSContent>{
         Uri.parse('lib/main.dart.dill'): DevFSContent.fromString('kernel'),
       });
 
       expect(server.received, hasLength(1));
       final _ReceivedRequest request = server.received.single;
       expect(request.method, 'PUT');
-      expect(request.header('dev_fs_name'), 'fluse');
+      expect(request.requireHeader('dev_fs_name'), 'fluse');
       expect(
-        utf8.decode(base64.decode(request.header('dev_fs_uri_b64')!)),
+        utf8.decode(base64.decode(request.requireHeader('dev_fs_uri_b64'))),
         'lib/main.dart.dill',
       );
       expect(utf8.decode(gzip.decode(request.body)), 'kernel');
@@ -265,27 +293,30 @@ void main() {
 
     test('Accept-Encoding を送らない', () async {
       // 付いていると応答が圧縮され、dart-lang/sdk#43525 を踏みやすくなる。
-      client = await buildClient();
+      final DevFSClient built = await buildClient();
+      client = built;
 
-      await client!.writeAll(<Uri, DevFSContent>{
+      await built.writeAll(<Uri, DevFSContent>{
         Uri.parse('a.dill'): DevFSContent.fromString('x'),
       });
 
-      expect(server.received.single.header('accept-encoding'), isNull);
+      expect(server.received.single.optionalHeader('accept-encoding'), isNull);
     });
 
     test('空の entries では何も送らない', () async {
-      client = await buildClient();
+      final DevFSClient built = await buildClient();
+      client = built;
 
-      await client!.writeAll(<Uri, DevFSContent>{});
+      await built.writeAll(<Uri, DevFSContent>{});
 
       expect(server.received, isEmpty);
     });
 
     test('全件を送る', () async {
-      client = await buildClient();
+      final DevFSClient built = await buildClient();
+      client = built;
 
-      await client!.writeAll(<Uri, DevFSContent>{
+      await built.writeAll(<Uri, DevFSContent>{
         for (int i = 0; i < 7; i++)
           Uri.parse('file$i.dill'): DevFSContent.fromString('body$i'),
       });
@@ -298,9 +329,10 @@ void main() {
     test('3並列を超えない', () async {
       // 応答を保留して、実際に何本同時に走ったかを測る。
       server.holdFor = const Duration(milliseconds: 80);
-      client = await buildClient();
+      final DevFSClient built = await buildClient();
+      client = built;
 
-      await client!.writeAll(<Uri, DevFSContent>{
+      await built.writeAll(<Uri, DevFSContent>{
         for (int i = 0; i < 9; i++)
           Uri.parse('file$i.dill'): DevFSContent.fromString('body$i'),
       });
@@ -312,9 +344,10 @@ void main() {
     test('3並列に達する', () async {
       // 上限が効いているだけでなく、直列にもなっていないこと。
       server.holdFor = const Duration(milliseconds: 80);
-      client = await buildClient();
+      final DevFSClient built = await buildClient();
+      client = built;
 
-      await client!.writeAll(<Uri, DevFSContent>{
+      await built.writeAll(<Uri, DevFSContent>{
         for (int i = 0; i < 6; i++)
           Uri.parse('file$i.dill'): DevFSContent.fromString('body$i'),
       });
@@ -324,9 +357,10 @@ void main() {
 
     test('maxInFlight を下げれば並列度も下がる', () async {
       server.holdFor = const Duration(milliseconds: 50);
-      client = await buildClient(maxInFlight: 1);
+      final DevFSClient built = await buildClient(maxInFlight: 1);
+      client = built;
 
-      await client!.writeAll(<Uri, DevFSContent>{
+      await built.writeAll(<Uri, DevFSContent>{
         for (int i = 0; i < 4; i++)
           Uri.parse('file$i.dill'): DevFSContent.fromString('body$i'),
       });
@@ -338,9 +372,10 @@ void main() {
   group('リトライ', () {
     test('失敗しても再試行して成功する', () async {
       server.failFirst = 2;
-      client = await buildClient();
+      final DevFSClient built = await buildClient();
+      client = built;
 
-      await client!.writeAll(<Uri, DevFSContent>{
+      await built.writeAll(<Uri, DevFSContent>{
         Uri.parse('a.dill'): DevFSContent.fromString('x'),
       });
 
@@ -350,10 +385,11 @@ void main() {
 
     test('リトライ回数を超えたら DevFSException になる', () async {
       server.failFirst = 100;
-      client = await buildClient(maxRetries: 2);
+      final DevFSClient built = await buildClient(maxRetries: 2);
+      client = built;
 
       await expectLater(
-        client!.writeAll(<Uri, DevFSContent>{
+        built.writeAll(<Uri, DevFSContent>{
           Uri.parse('a.dill'): DevFSContent.fromString('x'),
         }),
         throwsA(
@@ -372,13 +408,14 @@ void main() {
       server
         ..holdFor = const Duration(milliseconds: 300)
         ..failFirst = 0;
-      client = await buildClient(
+      final DevFSClient built = await buildClient(
         uploadTimeout: const Duration(milliseconds: 30),
         maxRetries: 1,
       );
+      client = built;
 
       await expectLater(
-        client!.writeAll(<Uri, DevFSContent>{
+        built.writeAll(<Uri, DevFSContent>{
           Uri.parse('a.dill'): DevFSContent.fromString('x'),
         }),
         throwsA(isA<DevFSException>()),
@@ -388,11 +425,15 @@ void main() {
 
   group('VmServiceClient.webSocketUriFor', () {
     test('HTTP ルートから ws の URI を作る', () {
+      // 認証コードは実行時に組み立てる。固定の値を書くと、実在の資格情報と
+      // 区別できない形でリポジトリに残る。
+      final String authCode = 'auth${DateTime.now().microsecondsSinceEpoch}';
+
       expect(
         VmServiceClient.webSocketUriFor(
-          Uri.parse('http://127.0.0.1:43219/xY7Kq2Lm9Ab=/'),
+          Uri.parse('http://127.0.0.1:43219/$authCode/'),
         ).toString(),
-        'ws://127.0.0.1:43219/xY7Kq2Lm9Ab=/ws',
+        'ws://127.0.0.1:43219/$authCode/ws',
       );
     });
 

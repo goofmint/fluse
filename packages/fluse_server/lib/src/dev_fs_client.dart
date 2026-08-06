@@ -53,7 +53,17 @@ final class DevFSClient {
     HttpClient? httpClient,
   }) : _vmService = vmService,
        _logger = logger,
-       _httpClient = httpClient ?? HttpClient();
+       _httpClient = httpClient ?? HttpClient() {
+    // 0 以下だとスケジューラが1件も投げられず writeAll が返らなくなる。
+    // 上限は dart-lang/sdk#43525 回避のための3（緩めてはいけない）。
+    if (maxInFlight < 1 || maxInFlight > defaultMaxInFlight) {
+      throw ArgumentError.value(
+        maxInFlight,
+        'maxInFlight',
+        '1..$defaultMaxInFlight を指定してください',
+      );
+    }
+  }
 
   /// 同時に投げる PUT の数。
   ///
@@ -82,6 +92,9 @@ final class DevFSClient {
   String? _fsName;
   Uri? _baseUri;
 
+  /// create / destroy の直列化。同時に呼ばれても遷移が交差しないようにする。
+  Future<void> _lifecycle = Future<void>.value();
+
   /// 作成済み DevFS の名前。未作成なら null。
   String? get fsName => _fsName;
 
@@ -89,7 +102,9 @@ final class DevFSClient {
   Uri? get baseUri => _baseUri;
 
   /// DevFS を作る。
-  Future<Uri> create(String fsName) async {
+  ///
+  /// 同時に呼ばれても、2つ目は1つ目の完了後に「既に作成済み」で失敗する。
+  Future<Uri> create(String fsName) => _serialize(() async {
     if (_fsName != null) {
       throw DevFSException('DevFS "$_fsName" が既に作成されています');
     }
@@ -98,18 +113,33 @@ final class DevFSClient {
     _baseUri = uri;
     _httpClient.maxConnectionsPerHost = maxInFlight;
     return uri;
-  }
+  });
 
   /// DevFS を消す。二重に呼んでも安全。
-  Future<void> destroy() async {
+  ///
+  /// **削除が成功してから状態を消す。** 先に消すと、RPC が失敗したときに
+  /// 再試行できず、端末側に DevFS が残り続ける。
+  Future<void> destroy() => _serialize(() async {
     final String? name = _fsName;
     if (name == null) {
       return;
     }
-    // 先に手放して、並行呼び出しが二重に削除しないようにする。
+    await _vmService.deleteDevFS(name);
     _fsName = null;
     _baseUri = null;
-    await _vmService.deleteDevFS(name);
+  });
+
+  /// ライフサイクル遷移を直列化する。
+  Future<T> _serialize<T>(Future<T> Function() action) {
+    final Completer<T> completer = Completer<T>();
+    _lifecycle = _lifecycle.then((_) async {
+      try {
+        completer.complete(await action());
+      } on Object catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    });
+    return completer.future;
   }
 
   /// 保持している接続を閉じる。
@@ -260,7 +290,8 @@ final class DevFSClient {
       );
       // 本文を読み切らないと接続が解放されない。
       await response.drain<void>();
-      if (response.statusCode >= 400) {
+      // 3xx を成功にすると、転送されないまま reloadSources に進む。
+      if (response.statusCode < 200 || response.statusCode >= 300) {
         throw DevFSException(
           '$deviceUri の PUT が ${response.statusCode} を返しました',
         );

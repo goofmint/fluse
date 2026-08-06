@@ -36,18 +36,21 @@ final class _StubVmService implements vm.VmService {
     if (error != null) {
       throw error;
     }
-    return vm.Response.parse(extensionResponse)!;
+    return _require(vm.Response.parse(extensionResponse), 'Response');
   }
 
   @override
   Future<vm.VM> getVM() async {
     calls.add('getVM||');
-    return vm.VM.parse(<String, Object?>{
-      'type': 'VM',
-      'isolates': <Object?>[
-        for (final vm.IsolateRef ref in isolates) ref.toJson(),
-      ],
-    })!;
+    return _require(
+      vm.VM.parse(<String, Object?>{
+        'type': 'VM',
+        'isolates': <Object?>[
+          for (final vm.IsolateRef ref in isolates) ref.toJson(),
+        ],
+      }),
+      'VM',
+    );
   }
 
   @override
@@ -63,7 +66,7 @@ final class _StubVmService implements vm.VmService {
     if (error != null) {
       throw error;
     }
-    return vm.ReloadReport.parse(reloadResponse)!;
+    return _require(vm.ReloadReport.parse(reloadResponse), 'ReloadReport');
   }
 
   @override
@@ -72,6 +75,17 @@ final class _StubVmService implements vm.VmService {
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName} は未実装です');
+
+  /// `parse()` が null を返したらテストを止める。
+  ///
+  /// `!` で潰すと、スタブに渡した JSON が不正だったことが分からない
+  /// null エラーとして出てしまう。
+  static T _require<T>(T? value, String what) {
+    if (value == null) {
+      throw StateError('スタブの $what を組み立てられません。JSON を確認してください');
+    }
+    return value;
+  }
 }
 
 vm.IsolateRef _isolate(String id, String name) =>
@@ -82,12 +96,17 @@ void main() {
   late VmServiceClient client;
   late MemoryLogSink sink;
 
+  /// VM Service の認証コード。固定値を書くと実在の資格情報と区別できない
+  /// 形でリポジトリに残るため、実行時に組み立てる。
+  late String authCode;
+
   setUp(() {
     stub = _StubVmService();
     sink = MemoryLogSink();
+    authCode = 'auth${DateTime.now().microsecondsSinceEpoch}';
     client = VmServiceClient(
       stub,
-      httpAddress: Uri.parse('http://127.0.0.1:43219/xY7Kq2Lm9Ab=/'),
+      httpAddress: Uri.parse('http://127.0.0.1:43219/$authCode/'),
       logger: FluseLogger(
         sinks: <FluseLogSink>[sink],
         minimumLevel: FluseLogLevel.debug,
@@ -210,21 +229,51 @@ void main() {
       expect(result.notices, <String>['const class を変更しました']);
     });
 
-    test('success が無ければ false として扱う', () async {
-      // 不明を成功にすると、失敗したまま accept を送ってしまう。
+    test('success が無ければ例外にする', () async {
+      // 不明を false に落とすと、失敗なのか応答が壊れているのか区別できない。
+      // どちらも先へ進めてはいけないので明示的に落とす。
       stub.reloadResponse = <String, Object?>{'type': 'ReloadReport'};
 
-      expect((await client.reloadSources('isolates/1')).success, isFalse);
+      await expectLater(
+        client.reloadSources('isolates/1'),
+        throwsA(
+          isA<VmServiceException>().having(
+            (VmServiceException e) => e.toString(),
+            'message',
+            contains('success'),
+          ),
+        ),
+      );
     });
 
-    test('notices の形が想定外でも壊れない', () async {
+    test('notices が省略されていれば空として扱う', () async {
+      // notices は VM の仕様上そもそも省略されうる。
+      stub.reloadResponse = <String, Object?>{
+        'type': 'ReloadReport',
+        'success': true,
+      };
+
+      expect((await client.reloadSources('isolates/1')).notices, isEmpty);
+    });
+
+    test('notices が List でなければ例外にする', () async {
+      // 有るのに形が違うのは応答が壊れている。黙って空にしない。
       stub.reloadResponse = <String, Object?>{
         'type': 'ReloadReport',
         'success': false,
         'notices': 'これは List ではない',
       };
 
-      expect((await client.reloadSources('isolates/1')).notices, isEmpty);
+      await expectLater(
+        client.reloadSources('isolates/1'),
+        throwsA(
+          isA<VmServiceException>().having(
+            (VmServiceException e) => e.toString(),
+            'message',
+            contains('notices'),
+          ),
+        ),
+      );
     });
 
     test('RPC の失敗は VmServiceException になる', () async {
@@ -275,7 +324,7 @@ void main() {
     await client.findMainIsolateId();
 
     expect(sink.lines, isNotEmpty);
-    expect(sink.lines.join('\n'), isNot(contains('xY7Kq2Lm9Ab')));
+    expect(sink.lines.join('\n'), isNot(contains(authCode)));
   });
 
   test('dispose は接続を閉じる', () async {
