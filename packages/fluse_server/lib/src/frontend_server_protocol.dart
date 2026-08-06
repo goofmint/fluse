@@ -91,9 +91,10 @@ final class FrontendServerOutputParser {
     }
     final String outputPath = line.substring(boundaryKey.length + 1, lastSpace);
     final int? errorCount = int.tryParse(line.substring(lastSpace + 1).trim());
-    if (errorCount == null) {
+    if (errorCount == null || errorCount < 0) {
       // 0 に落とすとコンパイル成功として扱われ、エラーを含む dill が
-      // DevFS 転送と reloadSources に流れる。必ず表面化させる。
+      // DevFS 転送と reloadSources に流れる。負数も同様に hasErrors を
+      // false にしてしまうため、どちらも必ず表面化させる。
       throw FormatException('frontend_server のエラー数を解釈できません', line);
     }
 

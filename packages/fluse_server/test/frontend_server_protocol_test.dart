@@ -124,6 +124,32 @@ void main() {
     });
   });
 
+  group('壊れた境界行', () {
+    test('エラー数が数値でなければ例外にする', () {
+      // 0 に落とすとコンパイル成功として扱われ、エラー入りの dill が流れる。
+      expect(
+        () => feed(<String>['result key1', 'key1', 'key1 /tmp/app.dill x']),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('エラー数が負数でも例外にする', () {
+      // 負数は hasErrors を false にしてしまう。
+      expect(
+        () => feed(<String>['result key1', 'key1', 'key1 /tmp/app.dill -1']),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('エラー数が無い形も例外にする', () {
+      // substring が RangeError にならないこと。
+      expect(
+        () => feed(<String>['result key1', 'key1', 'key1 /tmp/app.dill']),
+        throwsA(isA<FormatException>()),
+      );
+    });
+  });
+
   group('診断の解析', () {
     test('位置付きのエラーを分解する', () {
       final FrontendServerResult? result = feed(<String>[
