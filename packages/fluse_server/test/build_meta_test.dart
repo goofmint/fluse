@@ -359,6 +359,39 @@ void main() {
       expect(recorded.differencesFrom(other), hasLength(1));
     });
 
+    test('-D の値をマスクする', () {
+      // -D には API キーが入りうる。エラーメッセージは端末にもログにも
+      // 出るため、値をそのまま載せない。
+      const BuildMeta withSecret = BuildMeta(
+        trackWidgetCreation: true,
+        enableAsserts: true,
+        dartDefines: <String>['API_KEY=sk-live-abcdefghijklmnop'],
+      );
+      const BuildMeta other = BuildMeta(
+        trackWidgetCreation: true,
+        enableAsserts: true,
+        dartDefines: <String>[],
+      );
+
+      final String difference = withSecret.differencesFrom(other).single;
+
+      expect(difference, isNot(contains('abcdefghijklmnop')));
+      expect(difference, contains('API_KEY='));
+      expect(difference, contains('***'));
+    });
+
+    test('値が空の -D はマスクせず空のまま示す', () {
+      // マスクすると「空である」という情報が失われる。
+      expect(
+        BuildMeta.maskDefine('FLUTTER_APP_FLAVOR='),
+        'FLUTTER_APP_FLAVOR=',
+      );
+    });
+
+    test('= を含まない -D はそのまま', () {
+      expect(BuildMeta.maskDefine('FLAG'), 'FLAG');
+    });
+
     test('複数の差を全て報告する', () {
       const BuildMeta other = BuildMeta(
         trackWidgetCreation: false,

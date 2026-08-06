@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'redact.dart';
+
 /// `build_meta.json` の読み書きや解析に失敗したときに投げる。
 final class BuildMetaException implements Exception {
   const BuildMetaException(this.message);
@@ -145,8 +147,31 @@ final class BuildMeta {
     if (enableAsserts != other.enableAsserts)
       '--enable-asserts: 記録=$enableAsserts, 現在=${other.enableAsserts}',
     if (!_sameDefines(dartDefines, other.dartDefines))
-      '-D: 記録=$dartDefines, 現在=${other.dartDefines}',
+      '-D: 記録=${maskDefines(dartDefines)}, 現在=${maskDefines(other.dartDefines)}',
   ];
+
+  /// `-D` の値をマスクした表示用の文字列を返す。
+  ///
+  /// `-D` には API キーやトークンが入りうる。不一致のエラーメッセージは
+  /// 端末にもログにも出るため、値をそのまま載せない。キー名と「変わった
+  /// こと」が分かれば利用者は対処できる。
+  static List<String> maskDefines(List<String> defines) => <String>[
+    for (final String define in defines) maskDefine(define),
+  ];
+
+  /// `KEY=value` の値部分だけをマスクする。
+  ///
+  /// 値が空のもの（`FLUTTER_APP_FLAVOR=`）は空のままにする。マスクすると
+  /// 「空である」という情報が失われ、差分の読み取りが難しくなる。
+  static String maskDefine(String define) {
+    final int separator = define.indexOf('=');
+    if (separator < 0) {
+      return define;
+    }
+    final String key = define.substring(0, separator);
+    final String value = define.substring(separator + 1);
+    return value.isEmpty ? '$key=' : '$key=${maskToken(value)}';
+  }
 
   static bool _sameDefines(List<String> a, List<String> b) {
     if (a.length != b.length) {

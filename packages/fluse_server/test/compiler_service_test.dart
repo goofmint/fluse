@@ -265,7 +265,7 @@ void main() {
           isA<CompilerException>().having(
             (CompilerException e) => e.toString(),
             'message',
-            allOf(contains('-D'), contains('EXTRA=1')),
+            allOf(contains('-D'), contains('EXTRA=')),
           ),
         ),
       );
