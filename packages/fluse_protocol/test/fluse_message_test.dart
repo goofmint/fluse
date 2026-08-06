@@ -3,6 +3,20 @@ import 'dart:convert';
 import 'package:fluse_protocol/fluse_protocol.dart';
 import 'package:test/test.dart';
 
+/// `requireInt` の特殊な値だけを試すための入口。
+///
+/// メッセージ経由だと NaN / 無限大を JSON に載せられないため、
+/// `fromJson` を直接呼ぶ。
+abstract final class JsonReaderProbe {
+  static void requireInt(Object? value) {
+    FluseMessage.fromJson(<String, Object?>{
+      'type': 'ping',
+      'seq': value,
+      'timestampMs': 1,
+    });
+  }
+}
+
 /// JSON へ落として読み直す。**実際に文字列を経由させる**ことで、
 /// `jsonEncode` できない値が混ざっていないことも同時に確かめる。
 FluseMessage roundTrip(FluseMessage message) => FluseMessage.fromJson(
@@ -234,6 +248,82 @@ void main() {
               as PingMessage;
 
       expect(ping.seq, 7);
+    });
+
+    test('キー有りで null の任意フィールドは省略と同じ扱い', () {
+      // Kotlin 側が任意フィールドを null で明示送信しても失敗しない。
+      final CompileErrorMessage message =
+          FluseMessage.fromJson(<String, Object?>{
+                'type': 'compileError',
+                'summary': 's',
+                'diagnostics': <Object?>[
+                  <String, Object?>{
+                    'severity': 'error',
+                    'message': 'm',
+                    'file': null,
+                    'line': null,
+                    'col': null,
+                  },
+                ],
+              })
+              as CompileErrorMessage;
+
+      expect(message.diagnostics.single.file, isNull);
+      expect(message.diagnostics.single.line, isNull);
+      expect(message.diagnostics.single.col, isNull);
+    });
+
+    test('JSON が正確に表せない大きさの整数は拒否する', () {
+      // double.toInt() は 64bit の範囲外を黙って丸める。
+      expect(
+        () => FluseMessage.fromJson(<String, Object?>{
+          'type': 'ping',
+          'seq': 1e30,
+          'timestampMs': 1,
+        }),
+        throwsA(
+          isA<FluseProtocolException>().having(
+            (FluseProtocolException e) => e.message,
+            'message',
+            contains('正確に表せる整数'),
+          ),
+        ),
+      );
+    });
+
+    test('int でも安全範囲外なら拒否する', () {
+      expect(
+        () => FluseMessage.fromJson(<String, Object?>{
+          'type': 'ping',
+          'seq': 9007199254740992,
+          'timestampMs': 1,
+        }),
+        throwsA(isA<FluseProtocolException>()),
+      );
+    });
+
+    test('安全範囲の境界は受け入れる', () {
+      final PingMessage ping =
+          FluseMessage.fromJson(<String, Object?>{
+                'type': 'ping',
+                'seq': 9007199254740991,
+                'timestampMs': -9007199254740991,
+              })
+              as PingMessage;
+
+      expect(ping.seq, 9007199254740991);
+      expect(ping.timestampMs, -9007199254740991);
+    });
+
+    test('NaN や無限大は拒否する', () {
+      expect(
+        () => JsonReaderProbe.requireInt(double.nan),
+        throwsA(isA<FluseProtocolException>()),
+      );
+      expect(
+        () => JsonReaderProbe.requireInt(double.infinity),
+        throwsA(isA<FluseProtocolException>()),
+      );
     });
 
     test('小数は整数として受け入れない', () {

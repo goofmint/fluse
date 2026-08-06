@@ -29,22 +29,66 @@ extension type JsonReader(Map<String, Object?> json) {
     return value;
   }
 
+  /// JSON が正確に表せる整数の上限（2^53 - 1）。
+  ///
+  /// これを超える値は `double` を経由した時点で別の値になりうる。
+  /// Kotlin 側も JSON の数値を double で扱うため、この範囲に揃える。
+  static const int maxSafeInteger = 9007199254740991;
+
+  /// 同じく下限。
+  static const int minSafeInteger = -9007199254740991;
+
   /// 必須の整数。
   ///
   /// JSON の数値は `double` で来ることがある（`1.0` など）。整数として
   /// 表せる場合だけ受け入れる。丸めると別の値になってしまうため。
+  ///
+  /// **範囲も検査する。** `double.toInt()` は 64bit 整数の範囲外を
+  /// 黙って最大値・最小値に丸めるため、`1e30` のような値がそのまま
+  /// 無意味な整数として通ってしまう。
   int requireInt(String type, String field) {
     final Object? value = json[field];
     if (value == null) {
       throw FluseProtocolException.missingField(type, field);
     }
     if (value is int) {
-      return value;
+      return _requireSafeRange(type, field, value);
     }
-    if (value is double && value == value.roundToDouble() && value.isFinite) {
+    if (value is double && value.isFinite && value == value.roundToDouble()) {
+      if (value < minSafeInteger || value > maxSafeInteger) {
+        throw FluseProtocolException.wrongType(
+          type,
+          field,
+          'JSON が正確に表せる整数',
+          value,
+        );
+      }
       return value.toInt();
     }
     throw FluseProtocolException.wrongType(type, field, '整数', value);
+  }
+
+  /// 省略可能な整数。キーが無い場合と `null` の場合はどちらも null。
+  ///
+  /// `optionalString` と扱いを揃える。片方だけ `containsKey` で分岐すると、
+  /// 「キー有り + null」を送ってくる相手に対して片方だけ失敗する。
+  int? optionalInt(String type, String field) {
+    if (json[field] == null) {
+      return null;
+    }
+    return requireInt(type, field);
+  }
+
+  static int _requireSafeRange(String type, String field, int value) {
+    if (value < minSafeInteger || value > maxSafeInteger) {
+      throw FluseProtocolException.wrongType(
+        type,
+        field,
+        'JSON が正確に表せる整数',
+        value,
+      );
+    }
+    return value;
   }
 
   /// 必須のリスト。

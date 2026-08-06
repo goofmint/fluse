@@ -101,6 +101,72 @@ void main() {
       expect(restored.payload, payload);
     });
 
+    test('payload の上限ちょうどは通る', () {
+      final List<int> payload = List<int>.filled(
+        TunnelFrame.maxPayloadLength,
+        0x41,
+      );
+
+      expect(
+        TunnelFrame.decode(
+          TunnelFrame.data(1, payload).encode(),
+        ).payload.length,
+        TunnelFrame.maxPayloadLength,
+      );
+    });
+
+    test('上限を超える payload は encode で失敗する', () {
+      // 送信側が分割する責務を持つ。
+      expect(
+        () => TunnelFrame.data(
+          1,
+          List<int>.filled(TunnelFrame.maxPayloadLength + 1, 0),
+        ).encode(),
+        throwsA(
+          isA<FluseProtocolException>().having(
+            (FluseProtocolException e) => e.message,
+            'message',
+            contains('分割'),
+          ),
+        ),
+      );
+    });
+
+    test('上限を超える payload は decode でも失敗する', () {
+      // 長さを信じて確保すると、壊れた相手にメモリを取らせられる。
+      final List<int> bytes = <int>[
+        0x02,
+        0,
+        0,
+        0,
+        1,
+        ...List<int>.filled(TunnelFrame.maxPayloadLength + 1, 0),
+      ];
+
+      expect(
+        () => TunnelFrame.decode(bytes),
+        throwsA(isA<FluseProtocolException>()),
+      );
+    });
+
+    test('バイト範囲外の payload は encode で失敗する', () {
+      // Uint8List.setRange は黙って下位8ビットへ切り詰める。
+      expect(
+        () => TunnelFrame.data(1, <int>[0, 256]).encode(),
+        throwsA(
+          isA<FluseProtocolException>().having(
+            (FluseProtocolException e) => e.message,
+            'message',
+            allOf(contains('1 番目'), contains('256')),
+          ),
+        ),
+      );
+      expect(
+        () => TunnelFrame.data(1, <int>[-1]).encode(),
+        throwsA(isA<FluseProtocolException>()),
+      );
+    });
+
     test('範囲外の streamId は encode で失敗する', () {
       expect(
         () => const TunnelFrame(

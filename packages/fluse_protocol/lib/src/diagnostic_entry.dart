@@ -86,8 +86,8 @@ final class DiagnosticEntry {
       severity: severity,
       message: reader.requireString(type, 'message'),
       file: reader.optionalString(type, 'file'),
-      line: json.containsKey('line') ? reader.requireInt(type, 'line') : null,
-      col: json.containsKey('col') ? reader.requireInt(type, 'col') : null,
+      line: reader.optionalInt(type, 'line'),
+      col: reader.optionalInt(type, 'col'),
     );
   }
 

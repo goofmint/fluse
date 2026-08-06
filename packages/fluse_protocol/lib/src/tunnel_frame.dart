@@ -69,6 +69,15 @@ final class TunnelFrame {
   /// `streamId` の最大値。uint32 なので 0xFFFFFFFF。
   static const int maxStreamId = 0xFFFFFFFF;
 
+  /// 1フレームに載せられる payload の上限（1 MiB）。
+  ///
+  /// **送信側はこれを超える前に分割する責務がある。**
+  /// 上限を設けないと、壊れた相手や悪意ある相手が送る長さ宣言で
+  /// メモリを一気に確保させられる。設計 §8.2-5 のバックプレッシャ閾値
+  /// （送信キュー 4MB）より十分小さくし、1フレームでキューを埋めない
+  /// 大きさにしてある。
+  static const int maxPayloadLength = 1024 * 1024;
+
   final TunnelOpcode opcode;
 
   /// ストリームの識別子。uint32。
@@ -87,6 +96,20 @@ final class TunnelFrame {
         '${opcode.name} フレームに payload は載せられません'
         '（${payload.length} バイト）',
       );
+    }
+    if (payload.length > maxPayloadLength) {
+      throw FluseProtocolException(
+        'payload が上限を超えています: ${payload.length} バイト'
+        '（上限 $maxPayloadLength）。送信側で分割してください',
+      );
+    }
+    for (int i = 0; i < payload.length; i++) {
+      final int byte = payload[i];
+      if (byte < 0 || byte > 0xFF) {
+        // Uint8List.setRange は範囲外を例外にせず下位8ビットへ切り詰める。
+        // 黙って別のバイト列を送ることになる。
+        throw FluseProtocolException('payload の $i 番目がバイトの範囲外です: $byte');
+      }
     }
 
     final Uint8List bytes = Uint8List(headerLength + payload.length);
@@ -119,7 +142,17 @@ final class TunnelFrame {
     final int streamId =
         (bytes[1] << 24) | (bytes[2] << 16) | (bytes[3] << 8) | bytes[4];
 
-    final List<int> payload = bytes.length == headerLength
+    final int payloadLength = bytes.length - headerLength;
+    if (payloadLength > maxPayloadLength) {
+      // コピーする前に弾く。長さを信じて確保すると、壊れた相手に
+      // メモリを一気に取らせられる。
+      throw FluseProtocolException(
+        'payload が上限を超えています: $payloadLength バイト'
+        '（上限 $maxPayloadLength）',
+      );
+    }
+
+    final List<int> payload = payloadLength == 0
         ? _empty
         : Uint8List.fromList(bytes.sublist(headerLength));
 
