@@ -131,6 +131,16 @@ final class TunnelFrame {
       );
     }
 
+    // ヘッダを読む前に全要素を検査する。範囲外が混ざっていると、
+    // streamId が別の値になり、payload は Uint8List.fromList で黙って
+    // 下位8ビットへ切り詰められる。どちらも気づけない壊れ方をする。
+    for (int i = 0; i < bytes.length; i++) {
+      final int byte = bytes[i];
+      if (byte < 0 || byte > 0xFF) {
+        throw FluseProtocolException('フレームの $i 番目がバイトの範囲外です: $byte');
+      }
+    }
+
     final TunnelOpcode? opcode = TunnelOpcode.tryParse(bytes[0]);
     if (opcode == null) {
       // 未知の opcode を黙って捨てると、相手は届いたと思って待ち続ける。

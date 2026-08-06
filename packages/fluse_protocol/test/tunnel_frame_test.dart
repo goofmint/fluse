@@ -200,6 +200,25 @@ void main() {
       }
     });
 
+    test('バイト範囲外の要素があれば decode で失敗する', () {
+      // ヘッダに混ざると streamId が別の値になり、payload は黙って
+      // 下位8ビットへ切り詰められる。
+      expect(
+        () => TunnelFrame.decode(<int>[0x02, 0, 0, 0, 300]),
+        throwsA(
+          isA<FluseProtocolException>().having(
+            (FluseProtocolException e) => e.message,
+            'message',
+            allOf(contains('4 番目'), contains('300')),
+          ),
+        ),
+      );
+      expect(
+        () => TunnelFrame.decode(<int>[0x02, 0, 0, 0, 1, -1]),
+        throwsA(isA<FluseProtocolException>()),
+      );
+    });
+
     test('未知の opcode は失敗する', () {
       // 黙って捨てると、相手は届いたと思って待ち続ける。
       expect(
