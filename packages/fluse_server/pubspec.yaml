@@ -10,9 +10,14 @@ environment:
 resolution: workspace
 
 dependencies:
+  # パス結合とプロジェクト相対パスの算出。
+  path: ^1.9.0
   # 外部プロセス（flutter / adb / keytool / frontend_server）の抽象。
   # flutter_tools も同じパッケージを使っている。
   process: ^5.0.5
 
 dev_dependencies:
+  # 実 frontend_server に対する統合テストで SDK を解決するためだけに使う。
+  # 本番の依存グラフには入らない。
+  fluse_builder: ^0.1.0
   test: ^1.26.0
