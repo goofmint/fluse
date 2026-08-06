@@ -8,9 +8,13 @@ import 'tunnel_channel.dart';
 
 /// トンネルの中継に失敗したときに投げる。
 final class TunnelException implements Exception {
+  /// [message] に失敗の内容、[cause] に元の例外を渡す。
   const TunnelException(this.message, {this.cause});
 
+  /// 失敗の内容。
   final String message;
+
+  /// 元になった例外。無い場合は null。
   final Object? cause;
 
   @override
@@ -59,7 +63,10 @@ final class TunnelEndpoint {
   /// かえって遅くなる。ヒステリシスを持たせる。
   static const int defaultLowWaterMark = 1 * 1024 * 1024;
 
+  /// 送信キューがこの量を超えたら TCP の読み取りを止める。
   final int highWaterMark;
+
+  /// 送信キューがこの量まで減ったら TCP の読み取りを再開する。
   final int lowWaterMark;
 
   final TunnelChannel _channel;
@@ -80,6 +87,18 @@ final class TunnelEndpoint {
 
   bool _closed = false;
 
+  /// バックプレッシャで読み取りを止めているか。
+  ///
+  /// 実際の購読状態と揃える必要がある。閾値から都度計算すると、
+  /// 中間帯（低水位 < 現在 <= 高水位）で「止めているのに false」になる。
+  bool _backpressured = false;
+
+  Completer<void>? _terminated;
+
+  /// 受信が失敗した理由。[close] が [done] をこれで終わらせる。
+  Object? _terminationError;
+  StackTrace? _terminationTrace;
+
   /// 中継中のストリーム数。
   int get activeStreams => _streams.length;
 
@@ -87,7 +106,15 @@ final class TunnelEndpoint {
   int get pendingBytes => _pendingBytes;
 
   /// バックプレッシャで TCP の読み取りを止めているか。
-  bool get isPaused => _pendingBytes > highWaterMark;
+  bool get isPaused => _backpressured;
+
+  /// トンネルが終わったら完了する。
+  ///
+  /// チャネルが閉じた・受信でエラーが出た場合もここで分かる。**呼び出し
+  /// 元はこれを監視すること。** 監視しないと、中継が止まっているのに
+  /// TCP 待ち受けだけ生きている状態に気づけない。
+  /// [bind] 前は完了済みの [Future] を返す。
+  Future<void> get done => _terminated?.future ?? Future<void>.value();
 
   /// localhost に待ち受けを立て、VM Service として振る舞う URI を返す。
   ///
@@ -96,6 +123,11 @@ final class TunnelEndpoint {
   /// **同じ authCode を保ったまま**ローカルのポートを指す。認証コードは
   /// VM Service のパスそのものなので、書き換えると通らなくなる。
   Future<Uri> bind(String remoteVmServiceUri) async {
+    if (_closed) {
+      // close 後に bind できてしまうと、_closed が true のままなので
+      // close フレームが送られず、中継が片方向だけ壊れる。
+      throw const TunnelException('すでに close 済みです');
+    }
     if (_server != null) {
       throw const TunnelException('すでに bind 済みです');
     }
@@ -122,9 +154,20 @@ final class TunnelEndpoint {
       onError: (Object error) => _logger?.warn('TCP の待ち受けでエラーが発生しました: $error'),
     );
 
+    final Completer<void> terminated = Completer<void>();
+    _terminated = terminated;
     _incomingSubscription = _channel.incoming.listen(
       _handleIncomingFrame,
-      onError: (Object error) => _logger?.warn('トンネルの受信でエラーが発生しました: $error'),
+      onError: (Object error, StackTrace stackTrace) {
+        // 記録だけして続けると、中継が死んだことに誰も気づけない。
+        _logger?.warn('トンネルの受信でエラーが発生しました: $error');
+        _terminationError = TunnelException('トンネルの受信が失敗しました', cause: error);
+        _terminationTrace = stackTrace;
+        unawaited(close());
+      },
+      // done は close() が後始末を終えてから完了させる。ここで先に
+      // 完了させると、待っている側が「閉じ終わった」と誤解する。
+      onDone: () => unawaited(close()),
     );
 
     final Uri local = Uri(
@@ -160,6 +203,20 @@ final class TunnelEndpoint {
     }
     _streams.clear();
     _pendingBytes = 0;
+    _backpressured = false;
+
+    final Completer<void>? terminated = _terminated;
+    if (terminated != null && !terminated.isCompleted) {
+      final Object? error = _terminationError;
+      if (error != null) {
+        terminated.completeError(
+          error,
+          _terminationTrace ?? StackTrace.current,
+        );
+      } else {
+        terminated.complete();
+      }
+    }
   }
 
   // ------------------------------------------------------- TCP -> WebSocket
@@ -190,6 +247,12 @@ final class TunnelEndpoint {
       },
       onDone: () => unawaited(_closeStream(streamId, notifyPeer: true)),
     );
+
+    // 既に高水位を超えている最中に来た接続も止める。忘れると新しい
+    // 接続だけ全速で読み続けてしまう。
+    if (_backpressured) {
+      stream.pause();
+    }
   }
 
   /// TCP から読んだバイト列をフレームに割って送る。
@@ -221,9 +284,13 @@ final class TunnelEndpoint {
     unawaited(
       _channel
           .send(bytes)
-          .catchError(
-            (Object error) => _logger?.warn('トンネルへの送信に失敗しました: $error'),
-          )
+          .catchError((Object error) {
+            _logger?.warn('トンネルへの送信に失敗しました: $error');
+            // 送れなかったフレームは失われる。対向は届いたと思って
+            // 待ち続けるので、該当ストリームを畳む。close フレームも
+            // 同じチャネルを通るため、こちらからは送らない。
+            unawaited(_closeStream(frame.streamId, notifyPeer: false));
+          })
           .whenComplete(() {
             _pendingBytes -= bytes.length;
             _applyBackpressure();
@@ -234,12 +301,14 @@ final class TunnelEndpoint {
   /// 送信キューの量に応じて TCP の読み取りを止める / 再開する。
   void _applyBackpressure() {
     if (_pendingBytes > highWaterMark) {
+      _backpressured = true;
       for (final _TunnelStream stream in _streams.values) {
         stream.pause();
       }
       return;
     }
     if (_pendingBytes <= lowWaterMark) {
+      _backpressured = false;
       for (final _TunnelStream stream in _streams.values) {
         stream.resume();
       }

@@ -36,6 +36,9 @@ final class _FakeChannel implements TunnelChannel {
     return completer.future;
   }
 
+  /// 受信をエラーで終わらせる。
+  void fail(Object error) => _incoming.addError(error);
+
   /// 保留中の送信をすべて完了させる。
   void releaseAll() {
     for (final Completer<void> completer in _pending) {
@@ -234,17 +237,20 @@ void main() {
     test('data フレームが TCP に書き出される', () async {
       final Uri local = await endpoint.bind(remoteUri);
       final Socket socket = await Socket.connect(local.host, local.port);
-      final Future<List<int>> received = socket.fold<List<int>>(
-        <int>[],
-        (List<int> acc, List<int> d) => acc..addAll(d),
+      final List<int> received = <int>[];
+      final StreamSubscription<List<int>> subscription = socket.listen(
+        received.addAll,
       );
       await waitFor(() => endpoint.activeStreams == 1);
 
       channel.receive(TunnelFrame.data(1, <int>[9, 8, 7]));
-      await waitFor(() => channel.sent.isNotEmpty);
-      await endpoint.close();
+      // 実際に TCP へ届くまでを待つ。open フレームの有無で待つと、
+      // close の副作用に依存したテストになる。
+      await waitFor(() => received.length == 3, reason: 'TCP に届きませんでした');
 
-      expect(await received, <int>[9, 8, 7]);
+      expect(received, <int>[9, 8, 7]);
+      await subscription.cancel();
+      socket.destroy();
     });
 
     test('close フレームで TCP が閉じる', () async {
@@ -312,7 +318,40 @@ void main() {
       await waitFor(() => small.pendingBytes == 0);
 
       expect(small.isPaused, isFalse);
+      expect(small.pendingBytes, 0);
       socket.destroy();
+      await small.close();
+    });
+
+    test('高水位を超えている間に来た接続も止める', () async {
+      // 忘れると新しい接続だけ全速で読み続けてしまう。
+      final TunnelEndpoint small = TunnelEndpoint(
+        channel: channel,
+        highWaterMark: 4096,
+        lowWaterMark: 1024,
+      );
+      final Uri local = await small.bind(remoteUri);
+      final Socket first = await Socket.connect(local.host, local.port);
+      channel.holdSends = true;
+      first.add(List<int>.filled(8192, 0x41));
+      await first.flush();
+      await waitFor(() => small.isPaused);
+
+      final Socket second = await Socket.connect(local.host, local.port);
+      await waitFor(() => small.activeStreams == 2);
+
+      // 2本目も止まっていること（読み取りが進んでいない）を、
+      // 送信キューが増えないことで確認する。
+      final int before = small.pendingBytes;
+      second.add(List<int>.filled(4096, 0x42));
+      await second.flush();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(small.pendingBytes, before);
+
+      channel.releaseAll();
+      first.destroy();
+      second.destroy();
       await small.close();
     });
 
@@ -337,6 +376,36 @@ void main() {
     });
   });
 
+  group('チャネルの終了', () {
+    test('チャネルが閉じたら done が完了し、トンネルも閉じる', () async {
+      final Uri local = await endpoint.bind(remoteUri);
+      final Socket socket = await Socket.connect(local.host, local.port);
+      await waitFor(() => endpoint.activeStreams == 1);
+
+      await channel.dispose();
+
+      await endpoint.done;
+      expect(endpoint.activeStreams, 0);
+      socket.destroy();
+    });
+
+    test('受信エラーは done に伝わる', () async {
+      // 記録だけして続けると、中継が死んだことに誰も気づけない。
+      await endpoint.bind(remoteUri);
+
+      channel.fail(StateError('切断'));
+
+      await expectLater(endpoint.done, throwsA(isA<TunnelException>()));
+    });
+
+    test('bind 前の done は即座に完了する', () async {
+      final TunnelEndpoint fresh = TunnelEndpoint(channel: channel);
+
+      await expectLater(fresh.done, completes);
+      await fresh.close();
+    });
+  });
+
   group('close', () {
     test('全ストリームを閉じる', () async {
       final Uri local = await endpoint.bind(remoteUri);
@@ -358,6 +427,24 @@ void main() {
       await endpoint.close();
 
       expect(endpoint.activeStreams, 0);
+    });
+
+    test('close 後の bind は拒否する', () async {
+      // 通すと _closed が true のままなので close フレームが送られず、
+      // 中継が片方向だけ壊れる。
+      await endpoint.bind(remoteUri);
+      await endpoint.close();
+
+      await expectLater(
+        endpoint.bind(remoteUri),
+        throwsA(
+          isA<TunnelException>().having(
+            (TunnelException e) => e.message,
+            'message',
+            contains('close'),
+          ),
+        ),
+      );
     });
 
     test('閉じた後は新しい接続を受け付けない', () async {
