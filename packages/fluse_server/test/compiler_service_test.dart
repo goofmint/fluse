@@ -15,8 +15,9 @@ void main() {
   late CompilerService service;
   late FakeProcess process;
 
-  /// 境界キーを固定して、テストが応答を組み立てられるようにする。
-  final Random fixedRandom = Random(1234);
+  /// 境界キーを再現可能にする。setUp で作り直し、テスト間で乱数の状態を
+  /// 共有しない（実行順序でキーが変わると順序依存のテストになる）。
+  late Random fixedRandom;
 
   CompilerService buildService({
     bool trackWidgetCreation = true,
@@ -51,16 +52,29 @@ void main() {
         .toList();
   }
 
-  /// `frontend_server` の応答を流す。境界キーは stdin から読み取る。
+  /// 直近の `recompile` が送った境界キー。送っていなければ null。
+  Future<String?> lastRequestKey() async {
+    for (final String line in (await sentLines()).reversed) {
+      if (line.startsWith('recompile ')) {
+        return line.split(' ').last;
+      }
+    }
+    return null;
+  }
+
+  /// `frontend_server` の応答を流す。
+  ///
+  /// 応答の境界キーは frontend_server が自分で採番するため、要求側の
+  /// キーとは一致しない。既定では recompile が送った実際のキーを使い、
+  /// 実物に近い形にする（送っていなければ任意のキー）。
   Future<void> respond({
     required String outputPath,
     int errorCount = 0,
     List<String> diagnostics = const <String>[],
     List<String> sources = const <String>[],
+    String? boundaryKey,
   }) async {
-    // compile は応答側が任意のキーを選べる。recompile は要求で送った
-    // キーを使うが、応答の解析は `result <key>` 行に従うので同じでよい。
-    const String key = 'response-key';
+    final String key = boundaryKey ?? await lastRequestKey() ?? 'response-key';
     process.emitStdout('result $key\n');
     for (final String line in diagnostics) {
       process.emitStdout('$line\n');
@@ -73,6 +87,7 @@ void main() {
   }
 
   setUp(() {
+    fixedRandom = Random(1234);
     temp = Directory.systemTemp.createTempSync('fluse_compiler_test.');
     projectRoot = p.join(temp.path, 'project');
     Directory(projectRoot).createSync(recursive: true);
@@ -428,7 +443,7 @@ void main() {
       expect(service.isRunning, isFalse);
     });
 
-    test('応答が来なければタイムアウトする', () async {
+    test('応答が来なければタイムアウトし、プロセスを停止する', () async {
       await startService();
 
       await expectLater(
@@ -440,13 +455,17 @@ void main() {
           isA<CompilerException>().having(
             (CompilerException e) => e.toString(),
             'message',
-            contains('応答がありません'),
+            allOf(contains('応答がありません'), contains('停止')),
           ),
         ),
       );
+
+      // 応答は要求と対応付けられないため、諦めた要求の応答が後から
+      // 届くと次の要求の結果になってしまう。回復不能として落とす。
+      expect(service.isRunning, isFalse);
     });
 
-    test('タイムアウト後も次の要求を受け付ける', () async {
+    test('タイムアウト後の要求は明確に失敗する', () async {
       await startService();
 
       await expectLater(
@@ -457,13 +476,71 @@ void main() {
         throwsA(isA<CompilerException>()),
       );
 
+      await expectLater(
+        service.compile(Uri.file(p.join(projectRoot, 'lib', 'b.dart'))),
+        throwsA(
+          isA<CompilerException>().having(
+            (CompilerException e) => e.toString(),
+            'message',
+            contains('start()'),
+          ),
+        ),
+      );
+    });
+
+    test('壊れた境界行はコンパイル成功として扱わない', () async {
+      await startService();
+
       final Future<CompileOutput> pending = service.compile(
-        Uri.file(p.join(projectRoot, 'lib', 'b.dart')),
+        Uri.file(p.join(projectRoot, 'lib', 'main.dart')),
       );
       await pumpEventQueue();
-      await respond(outputPath: outputDill);
+      // エラー数が数値でない。0 に落とすとエラー入りの dill が流れる。
+      process
+        ..emitStdout('result k\n')
+        ..emitStdout('k\n')
+        ..emitStdout('k /tmp/app.dill not-a-number\n');
 
-      expect((await pending).errorCount, 0);
+      await expectLater(
+        pending,
+        throwsA(
+          isA<CompilerException>().having(
+            (CompilerException e) => e.toString(),
+            'message',
+            contains('解釈できません'),
+          ),
+        ),
+      );
+    });
+
+    test('スキーム無しの相対パスも projectRoot 配下で検証する', () async {
+      await startService();
+
+      await expectLater(
+        service.compile(Uri.parse('../../secrets.dart')),
+        throwsA(
+          isA<CompilerException>().having(
+            (CompilerException e) => e.toString(),
+            'message',
+            contains('プロジェクト外'),
+          ),
+        ),
+      );
+    });
+
+    test('扱えないスキームは明確に失敗する', () async {
+      await startService();
+
+      await expectLater(
+        service.compile(Uri.parse('https://example.com/main.dart')),
+        throwsA(
+          isA<CompilerException>().having(
+            (CompilerException e) => e.toString(),
+            'message',
+            contains('スキーム'),
+          ),
+        ),
+      );
     });
   });
 }

@@ -18,8 +18,9 @@ import 'package:test/test.dart';
 void main() {
   late Directory temp;
   late String projectRoot;
-  late CompilerService service;
-  late FlutterSdk sdk;
+  CompilerService? service;
+  FlutterSdk? sdk;
+  SdkNotFoundException? sdkError;
 
   /// リポジトリ内の `examples/counter_app`。
   ///
@@ -58,25 +59,36 @@ void main() {
   setUpAll(() async {
     try {
       sdk = await FlutterSdk.resolve();
-    } on SdkNotFoundException {
-      // setUpAll でのスキップはできないため、各テストで判定する。
-      return;
+    } on SdkNotFoundException catch (error) {
+      // setUpAll ではスキップできないため、各テストで判定する。
+      sdkError = error;
     }
   });
 
   setUp(() {
+    service = null;
     temp = Directory.systemTemp.createTempSync('fluse_compile_integration.');
     projectRoot = p.join(temp.path, 'counter_app');
     Directory(projectRoot).createSync(recursive: true);
   });
 
   tearDown(() async {
-    await service.shutdown();
-    temp.deleteSync(recursive: true);
+    try {
+      // shutdown が失敗しても一時ディレクトリは必ず消す。
+      // dill を含むので放置すると数十MB残る。
+      await service?.shutdown();
+    } finally {
+      temp.deleteSync(recursive: true);
+    }
   });
 
-  /// 前提が揃っていなければスキップする。揃っていれば true。
-  bool ensurePrerequisites() {
+  /// 前提が揃っていなければスキップする。揃っていれば解決済みの SDK。
+  FlutterSdk? ensurePrerequisites() {
+    final SdkNotFoundException? error = sdkError;
+    if (error != null) {
+      markTestSkipped('Flutter SDK を解決できないためスキップ: ${error.reason}');
+      return null;
+    }
     if (!File(
       p.join(sampleApp, '.dart_tool', 'package_config.json'),
     ).existsSync()) {
@@ -84,14 +96,14 @@ void main() {
         'examples/counter_app の依存が未解決のためスキップ'
         '（flutter pub get を実行してください）',
       );
-      return false;
+      return null;
     }
-    return true;
+    return sdk;
   }
 
   Uri mainUri() => Uri.file(p.join(projectRoot, 'lib', 'main.dart'));
 
-  CompilerService buildService() => CompilerService(
+  CompilerService buildService(FlutterSdk sdk) => CompilerService(
     dartAotRuntime: sdk.dartAotRuntime,
     frontendServerSnapshot: sdk.frontendServerSnapshot,
     patchedSdkRoot: sdk.patchedSdkRoot,
@@ -101,17 +113,18 @@ void main() {
   );
 
   test('counter_app を compile → 構文エラーで recompile → 復旧できる', () async {
-    if (!ensurePrerequisites()) {
-      service = buildService();
+    final FlutterSdk? resolved = ensurePrerequisites();
+    if (resolved == null) {
       return;
     }
 
     copySampleApp();
-    service = buildService();
-    await service.start();
+    final CompilerService compiler = buildService(resolved);
+    service = compiler;
+    await compiler.start();
 
     // --- 1. 初回コンパイルはエラー0で dill が出る -------------------------
-    final CompileOutput first = await service.compile(mainUri());
+    final CompileOutput first = await compiler.compile(mainUri());
 
     expect(
       first.errorCount,
@@ -126,7 +139,7 @@ void main() {
       first.sources.map((Uri u) => u.toString()),
       contains(contains('main.dart')),
     );
-    service.accept();
+    compiler.accept();
 
     // --- 2. 構文エラーを入れて recompile ---------------------------------
     final File mainFile = File(p.join(projectRoot, 'lib', 'main.dart'));
@@ -134,7 +147,7 @@ void main() {
     // セミコロンを落とすのではなく、確実にパースエラーになる行を足す。
     mainFile.writeAsStringSync('$original\nint broken = ;\n');
 
-    final CompileOutput broken = await service.recompile(mainUri(), <Uri>[
+    final CompileOutput broken = await compiler.recompile(mainUri(), <Uri>[
       mainUri(),
     ]);
 
@@ -159,11 +172,11 @@ void main() {
     );
 
     // reload は失敗した扱いにする。accept を送ると差分が二度と来なくなる。
-    await service.reject();
+    await compiler.reject();
 
     // --- 3. 直してから recompile するとエラーが消える ---------------------
     mainFile.writeAsStringSync(original);
-    final CompileOutput recovered = await service.recompile(mainUri(), <Uri>[
+    final CompileOutput recovered = await compiler.recompile(mainUri(), <Uri>[
       mainUri(),
     ]);
 
@@ -175,6 +188,6 @@ void main() {
           '${recovered.diagnostics.map((DiagnosticEntry d) => d.raw).join('\n')}',
     );
     expect(recovered.incrementalDill?.existsSync(), isTrue);
-    service.accept();
+    compiler.accept();
   });
 }

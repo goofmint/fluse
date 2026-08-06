@@ -148,6 +148,18 @@ final class CompilerService {
     for (final String define in dartDefines) '-D$define',
   ];
 
+  /// ログに出してよい形の起動コマンド。
+  ///
+  /// `-D<key>=<value>` の値は API キーやトークンでありうる。
+  /// [FluseLogger] のマスクはコマンド列の中身までは見ないので、ここで潰す。
+  List<String> get _loggableCommandLine => <String>[
+    for (final String argument in commandLine)
+      if (argument.startsWith('-D') && argument.contains('='))
+        '${argument.substring(0, argument.indexOf('=') + 1)}***'
+      else
+        argument,
+  ];
+
   /// プロセスを起動する。
   Future<void> start() async {
     if (_process != null) {
@@ -165,21 +177,33 @@ final class CompilerService {
     _process = process;
     _exitCode = null;
 
+    // utf8.decoder は不正バイト列で FormatException を投げる。onError が
+    // 無いと未捕捉例外になり、応答待ちがタイムアウトまで解放されない。
     _stdoutSubscription = process.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
-        .listen(_handleStdoutLine);
+        .listen(
+          _handleStdoutLine,
+          onError: (Object error) =>
+              _failPending('stdout の読み取りに失敗しました: $error'),
+        );
 
     _stderrSubscription = process.stderr
         .transform(utf8.decoder)
         .transform(const LineSplitter())
-        .listen(_handleStderrLine);
+        .listen(
+          _handleStderrLine,
+          onError: (Object error) =>
+              _logger?.warn('frontend_server(stderr) の読み取りに失敗: $error'),
+        );
 
+    // プロセスの終了はリクエストとは独立に起きる。ここで待つと start() が
+    // 返らなくなるため、意図的に await しない。
     unawaited(process.exitCode.then(_handleExit));
 
     _logger?.debug(
       'frontend_server を起動しました',
-      fields: <String, Object?>{'command': commandLine},
+      fields: <String, Object?>{'command': _loggableCommandLine},
     );
   }
 
@@ -259,31 +283,36 @@ final class CompilerService {
     });
   }
 
-  /// プロセスを終了させる。
+  /// プロセスを終了させる。二重に呼んでも安全。
   Future<void> shutdown() async {
     final Process? process = _process;
     if (process == null) {
       return;
     }
-
-    try {
-      process.stdin.writeln('quit');
-      await process.stdin.flush();
-    } on Object {
-      // すでに落ちている場合は何もしなくてよい。
-    }
-
-    process.kill();
-    await process.exitCode;
-
-    await _stdoutSubscription?.cancel();
-    await _stderrSubscription?.cancel();
-    _stdoutSubscription = null;
-    _stderrSubscription = null;
+    // 先に手放す。並行する shutdown が同じプロセスを二重に kill しないため。
     _process = null;
 
-    // 応答待ちのまま終了させられた呼び出し元を解放する。
-    _failPending('shutdown により中断されました');
+    try {
+      try {
+        process.stdin.writeln('quit');
+        await process.stdin.flush();
+      } on Object catch (error) {
+        // すでに落ちていれば quit は届かない。継続してよいが原因は残す。
+        _logger?.debug('quit を送れませんでした: $error');
+      }
+
+      process.kill();
+      await process.exitCode;
+    } finally {
+      // exitCode が例外で終わっても購読は必ず解放する。
+      await _stdoutSubscription?.cancel();
+      await _stderrSubscription?.cancel();
+      _stdoutSubscription = null;
+      _stderrSubscription = null;
+
+      // 応答待ちのまま終了させられた呼び出し元を解放する。
+      _failPending('shutdown により中断されました');
+    }
   }
 
   // --------------------------------------------------------------- internals
@@ -322,9 +351,19 @@ final class CompilerService {
     try {
       return await completer.future.timeout(timeout);
     } on TimeoutException {
+      // 応答は要求と対応付けられない（`result <key>` のキーは
+      // frontend_server が自分で採番し、こちらの `recompile <uri> <key>` の
+      // キーは差分リストの終端記号でしかない）。したがって諦めた要求の
+      // 応答が後から届くと、次の要求の結果として返ってしまう。
+      // 誤った dill が DevFS へ流れるのを防ぐため、タイムアウトは
+      // 回復不能として扱い、プロセスごと落とす。
       _parser = null;
       _pending = null;
-      throw CompilerException('$timeout 以内に応答がありませんでした');
+      await shutdown();
+      throw CompilerException(
+        '$timeout 以内に応答がありませんでした。'
+        'frontend_server を停止しました。start() からやり直してください',
+      );
     }
   }
 
@@ -347,8 +386,15 @@ final class CompilerService {
       return;
     }
 
-    parser.addLine(line);
-    final FrontendServerResult? result = parser.result;
+    final FrontendServerResult? result;
+    try {
+      parser.addLine(line);
+      result = parser.result;
+    } on FormatException catch (error) {
+      // 壊れた応答を成功として扱うと、エラーを含む dill が流れる。
+      _failPending('応答を解釈できませんでした: ${error.message} (${error.source})');
+      return;
+    }
     if (result == null) {
       return;
     }
@@ -396,24 +442,39 @@ final class CompilerService {
 
   /// ファイル URI を `--filesystem-scheme` 付きの URI に変換する。
   ///
-  /// `package:` URI と、既にスキームが付いた URI はそのまま通す。
+  /// `package:` URI と、既に `--filesystem-scheme` が付いた URI はそのまま
+  /// 通す。それ以外は `file:` かスキーム無し（相対パス）だけを受け付け、
+  /// **必ず [projectRoot] 配下であることを検証する**。`--filesystem-root`
+  /// の外を指す URI は `frontend_server` が解決できず、原因の分かりにくい
+  /// 失敗になるため、送る前に落とす。
   String _toCompilerUri(Uri uri) {
     if (uri.scheme == 'package' || uri.scheme == fileSystemScheme) {
       return uri.toString();
     }
-    if (!uri.isScheme('file') && !uri.hasScheme) {
-      return uri.toString();
+    if (uri.hasScheme && !uri.isScheme('file')) {
+      throw CompilerException(
+        '扱えない URI スキームです: $uri\n'
+        '  file: / package: / $fileSystemScheme: のいずれかを渡してください',
+      );
     }
 
-    final String absolutePath = uri.hasScheme ? uri.toFilePath() : uri.path;
-    final String relative = p.relative(absolutePath, from: projectRoot);
-    if (relative.startsWith('..')) {
+    // スキーム無しは projectRoot からの相対パスとして解決する。
+    // そのまま通すと `../../secrets.dart` が検証を素通りする。
+    final String absolutePath = p.normalize(
+      uri.hasScheme
+          ? uri.toFilePath()
+          : p.join(projectRoot, p.fromUri(uri.path)),
+    );
+
+    if (!p.isWithin(projectRoot, absolutePath)) {
       throw CompilerException(
         'プロジェクト外のファイルはコンパイルできません: $absolutePath\n'
         '  projectRoot: $projectRoot',
       );
     }
+
     // URI のパス区切りは常に `/`。Windows の `\` を変換する。
+    final String relative = p.relative(absolutePath, from: projectRoot);
     return '$fileSystemScheme:///${p.split(relative).join('/')}';
   }
 

@@ -85,9 +85,17 @@ final class FrontendServerOutputParser {
     // `<boundaryKey> <outputPath> <errorCount>`。
     // outputPath に空白が含まれうるので、区切りは最後の空白で取る。
     final int lastSpace = line.lastIndexOf(' ');
+    if (lastSpace <= boundaryKey.length) {
+      // `<key> <outputPath>` のようにエラー数が無い形。
+      throw FormatException('frontend_server の境界行を解釈できません', line);
+    }
     final String outputPath = line.substring(boundaryKey.length + 1, lastSpace);
-    final int errorCount =
-        int.tryParse(line.substring(lastSpace + 1).trim()) ?? 0;
+    final int? errorCount = int.tryParse(line.substring(lastSpace + 1).trim());
+    if (errorCount == null) {
+      // 0 に落とすとコンパイル成功として扱われ、エラーを含む dill が
+      // DevFS 転送と reloadSources に流れる。必ず表面化させる。
+      throw FormatException('frontend_server のエラー数を解釈できません', line);
+    }
 
     _result = FrontendServerResult(
       outputPath: outputPath,
