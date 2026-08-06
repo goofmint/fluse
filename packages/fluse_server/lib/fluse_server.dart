@@ -16,4 +16,6 @@ export 'src/hot_reload_orchestrator.dart';
 export 'src/process_manager.dart';
 export 'src/redact.dart';
 export 'src/reload_contracts.dart';
+export 'src/tunnel_channel.dart';
+export 'src/tunnel_endpoint.dart';
 export 'src/vm_service_client.dart';
