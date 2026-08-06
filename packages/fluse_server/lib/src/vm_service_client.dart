@@ -4,6 +4,7 @@ import 'package:vm_service/vm_service.dart' as vm;
 import 'package:vm_service/vm_service_io.dart' as vm_io;
 
 import 'fluse_logger.dart';
+import 'reload_contracts.dart';
 
 /// VM Service とのやり取りに失敗したときに投げる。
 final class VmServiceException implements Exception {
@@ -43,7 +44,7 @@ final class ReloadResult {
 ///
 /// DevFS の作成・削除もここを通す。`vm_service` パッケージに触れる場所を
 /// 1つに絞ることで、バージョン追従の影響範囲を閉じ込める。
-final class VmServiceClient {
+final class VmServiceClient implements VmServiceContract {
   VmServiceClient(
     this._service, {
     required this.httpAddress,
@@ -118,6 +119,7 @@ final class VmServiceClient {
   /// 通常は1つだけだが、`dart:isolate` を使うアプリでは複数ありうる。
   /// **`main` という名前を優先し、無ければ先頭を採る**。VM は起動順に
   /// isolate を並べるので、先頭がルート isolate になる。
+  @override
   Future<String> findMainIsolateId() async {
     final vm.VM machine;
     try {
@@ -196,6 +198,7 @@ final class VmServiceClient {
   /// 差分を反映する。
   ///
   /// [rootLibUri] には DevFS 上の差分 dill を指す URI を渡す。
+  @override
   Future<ReloadResult> reloadSources(
     String isolateId, {
     String? rootLibUri,
@@ -236,6 +239,7 @@ final class VmServiceClient {
   }
 
   /// ウィジェットツリーを作り直す。リロード後の画面反映に必要。
+  @override
   Future<void> reassemble(String isolateId) async {
     try {
       await _service.callServiceExtension(
@@ -251,6 +255,7 @@ final class VmServiceClient {
   /// 画像キャッシュから [assetPath] を追い出す。
   ///
   /// asset を差し替えたときに呼ばないと、古い画像が表示され続ける。
+  @override
   Future<void> evict(String isolateId, String assetPath) async {
     try {
       await _service.callServiceExtension(
