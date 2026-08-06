@@ -275,13 +275,21 @@ final class VmServiceClient implements VmServiceContract {
     return <({String viewId, String? isolateId})>[
       for (final Object? view in views)
         if (view is Map && view['id'] is String)
-          (
-            viewId: '${view['id']}',
-            isolateId: view['isolate'] is Map
-                ? (view['isolate'] as Map)['id'] as String?
-                : null,
-          ),
+          (viewId: '${view['id']}', isolateId: _isolateIdOf(view)),
     ];
+  }
+
+  /// View に紐づく isolate の id。取れなければ null。
+  ///
+  /// 型を確かめずに `as String?` で潰すと、想定外の値で [TypeError] が
+  /// 飛び、[VmServiceException] に変換されないまま呼び出し元へ抜ける。
+  static String? _isolateIdOf(Map<Object?, Object?> view) {
+    final Object? isolate = view['isolate'];
+    if (isolate is! Map) {
+      return null;
+    }
+    final Object? id = isolate['id'];
+    return id is String ? id : null;
   }
 
   /// DevFS 上の asset ディレクトリをエンジンに教える

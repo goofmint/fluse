@@ -36,6 +36,10 @@ Future<int> main(List<String> args) async {
   // どちらで通るかをこのスパイクで確かめるため切り替えられるようにする。
   final bool useFilesystemScheme = options['scheme'] != 'package';
 
+  // `--asset` はプロジェクト配下に限る。絶対パスや `..` をそのまま
+  // 受け取ると、プロジェクト外のファイルを端末へ送れてしまう。
+  final String? assetPath = _validateAssetPath(options['asset'], projectRoot);
+
   final Directory cache = Directory(p.join(projectRoot, '.flutter_preview'))
     ..createSync(recursive: true);
 
@@ -53,6 +57,43 @@ Future<int> main(List<String> args) async {
     Uri.parse(vmServiceUri),
     logger: logger,
   );
+
+  CompilerService? compiler;
+  DevFSClient? devFS;
+  try {
+    return await _run(
+      vmService: vmService,
+      sdk: sdk,
+      logger: logger,
+      projectRoot: projectRoot,
+      cache: cache,
+      useFilesystemScheme: useFilesystemScheme,
+      assetPath: assetPath,
+      onCompiler: (CompilerService c) => compiler = c,
+      onDevFS: (DevFSClient d) => devFS = d,
+    );
+  } finally {
+    // 例外経路でも必ず解放する。DevFS を残すと端末側にゴミが溜まり、
+    // frontend_server を残すとプロセスが居座る。
+    await _releaseQuietly('DevFS の削除', () => devFS?.destroy());
+    devFS?.close();
+    await _releaseQuietly('frontend_server の停止', () => compiler?.shutdown());
+    await _releaseQuietly('VM Service の切断', vmService.dispose);
+  }
+}
+
+/// 本体。解放は呼び出し元の finally が受け持つ。
+Future<int> _run({
+  required VmServiceClient vmService,
+  required FlutterSdk sdk,
+  required FluseLogger logger,
+  required String projectRoot,
+  required Directory cache,
+  required bool useFilesystemScheme,
+  required String? assetPath,
+  required void Function(CompilerService) onCompiler,
+  required void Function(DevFSClient) onDevFS,
+}) async {
   final String isolateId = await vmService.findMainIsolateId();
   stdout.writeln('  isolate: $isolateId');
 
@@ -70,6 +111,7 @@ Future<int> main(List<String> args) async {
         : '',
     logger: logger,
   );
+  onCompiler(compiler);
   await compiler.start();
 
   final Uri mainUri = useFilesystemScheme
@@ -88,11 +130,19 @@ Future<int> main(List<String> args) async {
     for (final DiagnosticEntry d in first.diagnostics) {
       stderr.writeln('  ${d.raw}');
     }
-    await compiler.shutdown();
+    return 1;
+  }
+
+  final File? compiledDill = first.incrementalDill;
+  if (compiledDill == null) {
+    // エラーが無いのに出力が無いのは応答が壊れている。黙って先へ進むと
+    // 「転送するものが無いのに成功」に見えてしまう。
+    stderr.writeln('  コンパイルは成功したが dill が出力されていません');
     return 1;
   }
   stdout.writeln('== DevFS を作成 ==');
   final DevFSClient devFS = DevFSClient(vmService: vmService, logger: logger);
+  onDevFS(devFS);
   final Uri devFsBase = await devFS.create('fluse-spike');
   stdout.writeln('  $devFsBase');
 
@@ -110,7 +160,7 @@ Future<int> main(List<String> args) async {
   // 差分だけを送っても VM は文脈を組み立てられず、
   // `Error while starting Kernel isolate task` で拒否される。
   stdout.writeln('== 初回同期（完全な dill を転送）==');
-  final File fullDill = first.incrementalDill!;
+  final File fullDill = compiledDill;
   final Stopwatch priming = Stopwatch()..start();
   await devFS.writeAll(<Uri, DevFSContent>{
     Uri.parse(dillName): DevFSContent.fromFile(fullDill),
@@ -128,7 +178,6 @@ Future<int> main(List<String> args) async {
     for (final String notice in primed.notices) {
       stderr.writeln('  notice: $notice');
     }
-    await compiler.shutdown();
     return 1;
   }
   compiler.accept();
@@ -137,7 +186,6 @@ Future<int> main(List<String> args) async {
   // DevFS 上の置き場所は flutter_tools と同じ `build/flutter_assets/` 配下、
   // evict に渡すのは asset マニフェスト上のパス（`assets/...`）。
   const String assetSubdir = 'build/flutter_assets';
-  final String? assetPath = options['asset'];
   final List<ChangedAsset> changedAssets = <ChangedAsset>[
     if (assetPath != null)
       ChangedAsset(
@@ -160,8 +208,15 @@ Future<int> main(List<String> args) async {
       for (final ChangedAsset asset in changedAssets)
         asset.deviceUri: asset.content,
     });
-    for (final ({String viewId, String? isolateId}) view
-        in await vmService.listViews()) {
+    final List<({String viewId, String? isolateId})> views = await vmService
+        .listViews();
+    if (views.isEmpty) {
+      // View が無いと asset ディレクトリを登録できない。そのまま進むと
+      // 「成功したのに画像だけ古いまま」という分かりにくい結果になる。
+      stderr.writeln('  Flutter View が1つも見つかりません。asset は反映できません');
+      return 1;
+    }
+    for (final ({String viewId, String? isolateId}) view in views) {
       await vmService.setAssetDirectory(
         viewId: view.viewId,
         isolateId: view.isolateId,
@@ -200,12 +255,41 @@ Future<int> main(List<String> args) async {
     stdout.writeln('  ${d.raw}');
   }
 
-  await devFS.destroy();
-  devFS.close();
-  await compiler.shutdown();
-  await vmService.dispose();
-
   return result.isSuccess ? 0 : 1;
+}
+
+/// `--asset` をプロジェクト配下の相対パスに限定する。
+///
+/// 絶対パスや `..` をそのまま受け取ると、プロジェクト外のファイルを
+/// 端末へ送れてしまう。
+String? _validateAssetPath(String? assetPath, String projectRoot) {
+  if (assetPath == null) {
+    return null;
+  }
+  if (p.isAbsolute(assetPath)) {
+    throw ArgumentError.value(assetPath, '--asset', 'プロジェクト相対で指定してください');
+  }
+  final String resolved = p.normalize(p.join(projectRoot, assetPath));
+  if (!p.isWithin(projectRoot, resolved)) {
+    throw ArgumentError.value(
+      assetPath,
+      '--asset',
+      'プロジェクト外は指定できません: $resolved',
+    );
+  }
+  return p.relative(resolved, from: projectRoot);
+}
+
+/// 解放処理を、失敗しても他の解放を止めないように包む。
+Future<void> _releaseQuietly(
+  String what,
+  Future<void>? Function() action,
+) async {
+  try {
+    await action();
+  } on Object catch (error) {
+    stderr.writeln('  $what に失敗しました: $error');
+  }
 }
 
 /// `flutter build apk --debug` が渡していた `-D` を再現する。

@@ -323,6 +323,23 @@ void main() {
       );
     });
 
+    test('isolate.id が文字列でなければ null として扱う', () async {
+      // as String? で潰すと TypeError が VmServiceException に変換されず
+      // そのまま呼び出し元へ抜ける。
+      stub.extensionResponse = <String, Object?>{
+        'type': 'FlutterViewList',
+        'views': <Object?>[
+          <String, Object?>{
+            'type': 'FlutterView',
+            'id': '_flutterView/0x3',
+            'isolate': <String, Object?>{'id': 12345},
+          },
+        ],
+      };
+
+      expect((await client.listViews()).single.isolateId, isNull);
+    });
+
     test('views が無い応答は失敗させる', () async {
       stub.extensionResponse = <String, Object?>{'type': 'Success'};
 
@@ -339,6 +356,7 @@ void main() {
 
       expect(stub.calls.single, contains('_flutter.setAssetBundlePath'));
       expect(stub.calls.single, contains('_flutterView/0x1'));
+      expect(stub.calls.single, contains('isolates/1'));
       expect(stub.calls.single, contains('/devfs/fluse/build/flutter_assets/'));
     });
 
