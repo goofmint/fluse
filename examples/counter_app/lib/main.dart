@@ -81,7 +81,10 @@ class _MyHomePageState extends State<MyHomePage> {
             Image.asset('assets/images/fluse_logo.png', width: 96, height: 96),
             const SizedBox(height: 24),
             const Text('You have pushed the button this many times:'),
-            Text('$_counter', style: Theme.of(context).textTheme.headlineMedium),
+            Text(
+              '$_counter',
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
             const SizedBox(height: 24),
             // フォント asset。Inconsolata が読めていれば等幅で表示される。
             const Text(
