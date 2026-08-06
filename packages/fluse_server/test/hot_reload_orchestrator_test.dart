@@ -35,10 +35,17 @@ final class _FakeCompiler implements CompilerContract {
     needsConfirmation = false;
   }
 
+  /// `reject` を失敗させたい場合に設定する。
+  Object? rejectError;
+
   @override
   Future<CompileOutput?> reject() async {
     confirmations.add('reject');
     needsConfirmation = false;
+    final Object? failure = rejectError;
+    if (failure != null) {
+      throw failure;
+    }
     return null;
   }
 }
@@ -227,10 +234,24 @@ void main() {
     test('isolate は一度だけ特定して使い回す', () async {
       final HotReloadOrchestrator orchestrator = buildOrchestrator();
 
-      await orchestrator.reload(invalidated: <Uri>[mainUri]);
-      await orchestrator.reload(invalidated: <Uri>[mainUri]);
+      final HotReloadResult first = await orchestrator.reload(
+        invalidated: <Uri>[mainUri],
+      );
+      final HotReloadResult second = await orchestrator.reload(
+        invalidated: <Uri>[mainUri],
+      );
 
       expect(vmService.findIsolateCalls, 1);
+      // 2回目はキャッシュヒットなので段として記録しない。毎回0msの段が
+      // 並ぶとログのノイズになる。
+      expect(
+        first.timings.keys,
+        contains(HotReloadOrchestrator.stageResolveIsolate),
+      );
+      expect(
+        second.timings.keys,
+        isNot(contains(HotReloadOrchestrator.stageResolveIsolate)),
+      );
     });
 
     test('invalidateIsolate で再取得する', () async {
@@ -384,6 +405,30 @@ void main() {
         throwsA(isA<VmServiceException>()),
       );
       expect(compiler.confirmations, <String>['reject']);
+      // 失敗した段が isolate 解決だと分かること。
+      expect(
+        sink.lines.join('\n'),
+        contains(HotReloadOrchestrator.stageResolveIsolate),
+      );
+    });
+
+    test('reject の失敗で元の例外を隠さない', () async {
+      // 後始末の失敗を投げると、本当の原因が呼び出し元に届かなくなる。
+      devFS.error = const DevFSException('本当の原因');
+      compiler.rejectError = StateError('後始末の失敗');
+      final HotReloadOrchestrator orchestrator = buildOrchestrator();
+
+      await expectLater(
+        orchestrator.reload(invalidated: <Uri>[mainUri]),
+        throwsA(
+          isA<DevFSException>().having(
+            (DevFSException e) => e.message,
+            'message',
+            '本当の原因',
+          ),
+        ),
+      );
+      expect(sink.lines.join('\n'), contains('cleanupError'));
     });
 
     test('reloadSources が例外を投げたら reject してから投げ直す', () async {

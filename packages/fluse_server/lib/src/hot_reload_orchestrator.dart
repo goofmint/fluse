@@ -102,6 +102,7 @@ final class HotReloadOrchestrator {
   /// 段の名前。[HotReloadResult.timings] のキー。
   static const String stageRecompile = 'recompile';
   static const String stageDevFsWrite = 'devfsWrite';
+  static const String stageResolveIsolate = 'resolveIsolate';
   static const String stageReload = 'reloadSources';
   static const String stageEvict = 'evict';
   static const String stageReassemble = 'reassemble';
@@ -192,7 +193,16 @@ final class HotReloadOrchestrator {
       });
 
       // --- 3. reloadSources ------------------------------------------------
-      isolateId = _isolateId ??= await _vmService.findMainIsolateId();
+      // 解決済みなら計測しない。キャッシュヒットを段として記録すると
+      // 「毎回0ms の段がある」ノイズになる。
+      final String? cached = _isolateId;
+      isolateId =
+          cached ??
+          await _measure(
+            stageResolveIsolate,
+            timings,
+            () async => _isolateId = await _vmService.findMainIsolateId(),
+          );
 
       reloaded = await _measure(
         stageReload,
@@ -200,12 +210,21 @@ final class HotReloadOrchestrator {
         () => _vmService.reloadSources(isolateId, rootLibUri: rootLibUri),
       );
     } on Object catch (error, stackTrace) {
-      await _rejectIfPending();
+      final String failedStage = _lastStage(timings);
+      // 後始末の失敗で元の原因を隠さない。reject が投げても、返すべきは
+      // DevFS / isolate / reloadSources の例外のほう。
+      Object? cleanupError;
+      try {
+        await _rejectIfPending();
+      } on Object catch (rejectError) {
+        cleanupError = rejectError;
+      }
       _logger?.error(
         'ホットリロードが失敗しました',
         fields: <String, Object?>{
-          'failedStage': _lastStage(timings),
+          'failedStage': failedStage,
           'error': '$error',
+          if (cleanupError != null) 'cleanupError': '$cleanupError',
           ...timings,
         },
       );
