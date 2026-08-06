@@ -68,9 +68,19 @@ final class _FakeVmService implements VmServiceContract {
   int reassembleCalls = 0;
   final List<String> calls = <String>[];
 
+  /// `findMainIsolateId` を失敗させたい場合に設定する。
+  Object? findIsolateError;
+
+  /// `reloadSources` を失敗させたい場合に設定する。
+  Object? reloadError;
+
   @override
   Future<String> findMainIsolateId() async {
     findIsolateCalls++;
+    final Object? failure = findIsolateError;
+    if (failure != null) {
+      throw failure;
+    }
     return 'isolates/1';
   }
 
@@ -81,6 +91,10 @@ final class _FakeVmService implements VmServiceContract {
     String? packagesUri,
   }) async {
     calls.add('reloadSources:$rootLibUri');
+    final Object? failure = reloadError;
+    if (failure != null) {
+      throw failure;
+    }
     return reloadResult;
   }
 
@@ -245,6 +259,10 @@ void main() {
       expect(result.status, HotReloadStatus.success);
       expect(devFS.writes, isEmpty);
       expect(vmService.calls, isEmpty);
+      // 適用していないので reject。確認を未解決のまま残すと、この差分が
+      // 次回の recompile に含まれなくなる。
+      expect(compiler.confirmations, <String>['reject']);
+      expect(compiler.needsConfirmation, isFalse);
     });
   });
 
@@ -341,9 +359,10 @@ void main() {
     });
   });
 
-  group('DevFS 転送の失敗', () {
-    test('reloadSources に進まず例外が伝わる', () async {
+  group('accept 前の例外', () {
+    test('DevFS 転送が失敗したら reject してから投げ直す', () async {
       // 部分的に転送された状態で反映すると、端末側の kernel と食い違う。
+      // 確認を未解決のまま抜けると、この差分が次回に含まれなくなる。
       devFS.error = const DevFSException('転送に失敗しました');
       final HotReloadOrchestrator orchestrator = buildOrchestrator();
 
@@ -352,7 +371,47 @@ void main() {
         throwsA(isA<DevFSException>()),
       );
       expect(vmService.calls, isEmpty);
-      expect(compiler.confirmations, isEmpty);
+      expect(compiler.confirmations, <String>['reject']);
+      expect(compiler.needsConfirmation, isFalse);
+    });
+
+    test('isolate の特定が失敗したら reject してから投げ直す', () async {
+      vmService.findIsolateError = const VmServiceException('isolate なし');
+      final HotReloadOrchestrator orchestrator = buildOrchestrator();
+
+      await expectLater(
+        orchestrator.reload(invalidated: <Uri>[mainUri]),
+        throwsA(isA<VmServiceException>()),
+      );
+      expect(compiler.confirmations, <String>['reject']);
+    });
+
+    test('reloadSources が例外を投げたら reject してから投げ直す', () async {
+      vmService.reloadError = const VmServiceException('rpc 失敗');
+      final HotReloadOrchestrator orchestrator = buildOrchestrator();
+
+      await expectLater(
+        orchestrator.reload(invalidated: <Uri>[mainUri]),
+        throwsA(isA<VmServiceException>()),
+      );
+      expect(compiler.confirmations, <String>['reject']);
+      expect(compiler.needsConfirmation, isFalse);
+    });
+
+    test('失敗した段と計測値をログに残す', () async {
+      // どの段で落ちたか分からないと原因の切り分けができない。
+      devFS.error = const DevFSException('boom');
+      final HotReloadOrchestrator orchestrator = buildOrchestrator();
+
+      await expectLater(
+        orchestrator.reload(invalidated: <Uri>[mainUri]),
+        throwsA(isA<DevFSException>()),
+      );
+
+      final String logged = sink.lines.join('\n');
+      expect(logged, contains('failedStage'));
+      expect(logged, contains(HotReloadOrchestrator.stageDevFsWrite));
+      expect(logged, contains(HotReloadOrchestrator.stageRecompile));
     });
   });
 
@@ -390,19 +449,6 @@ void main() {
       expect(result.timings.keys, <String>[
         HotReloadOrchestrator.stageRecompile,
       ]);
-    });
-
-    test('失敗した段も記録する', () async {
-      // どの段で落ちたか分からないと原因の切り分けができない。
-      devFS.error = const DevFSException('boom');
-      final HotReloadOrchestrator orchestrator = buildOrchestrator();
-
-      await expectLater(
-        orchestrator.reload(invalidated: <Uri>[mainUri]),
-        throwsA(isA<DevFSException>()),
-      );
-      // 例外で抜けても finally で記録される。
-      expect(devFS.writes, isEmpty);
     });
 
     test('ログに elapsedMs を構造化フィールドで残す', () async {

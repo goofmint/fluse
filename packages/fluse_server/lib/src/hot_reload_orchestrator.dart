@@ -164,6 +164,11 @@ final class HotReloadOrchestrator {
     final File? dill = compiled.incrementalDill;
     if (dill == null) {
       // 差分が無い応答。転送するものが無いので反映もしない。
+      // **確認は必ず解決しておく。** 未解決のまま残すと、この差分が
+      // 「適用済みでも未送信でもない」宙ぶらりんの状態になる。
+      // 適用していないので reject を送る（設計 §10-2 が警告するのは
+      // 「適用していないのに accept する」ほうであり、その逆は安全）。
+      await _rejectIfPending();
       _logger?.debug('差分 dill が無いため転送をスキップしました');
       return HotReloadResult(
         status: HotReloadStatus.success,
@@ -172,23 +177,40 @@ final class HotReloadOrchestrator {
       );
     }
 
-    await _measure(stageDevFsWrite, timings, () async {
-      await _devFS.writeAll(<Uri, DevFSContent>{
-        dillDeviceUri: DevFSContent.fromFile(dill),
-        for (final ChangedAsset asset in changedAssets)
-          asset.deviceUri: asset.content,
+    // ここから accept までの間に例外が出た場合、確認が未解決のまま
+    // 呼び出し元へ抜けてしまう。その差分は次回の recompile に含まれず、
+    // 変更が永久に反映されなくなる。必ず reject してから投げ直す。
+    final ReloadResult reloaded;
+    final String isolateId;
+    try {
+      await _measure(stageDevFsWrite, timings, () async {
+        await _devFS.writeAll(<Uri, DevFSContent>{
+          dillDeviceUri: DevFSContent.fromFile(dill),
+          for (final ChangedAsset asset in changedAssets)
+            asset.deviceUri: asset.content,
+        });
       });
-    });
 
-    // --- 3. reloadSources --------------------------------------------------
-    final String isolateId = _isolateId ??= await _vmService
-        .findMainIsolateId();
+      // --- 3. reloadSources ------------------------------------------------
+      isolateId = _isolateId ??= await _vmService.findMainIsolateId();
 
-    final ReloadResult reloaded = await _measure(
-      stageReload,
-      timings,
-      () => _vmService.reloadSources(isolateId, rootLibUri: rootLibUri),
-    );
+      reloaded = await _measure(
+        stageReload,
+        timings,
+        () => _vmService.reloadSources(isolateId, rootLibUri: rootLibUri),
+      );
+    } on Object catch (error, stackTrace) {
+      await _rejectIfPending();
+      _logger?.error(
+        'ホットリロードが失敗しました',
+        fields: <String, Object?>{
+          'failedStage': _lastStage(timings),
+          'error': '$error',
+          ...timings,
+        },
+      );
+      Error.throwWithStackTrace(error, stackTrace);
+    }
 
     if (!reloaded.success) {
       // 必ず reject する。送らないと差分が「送信済み」のまま残り、
@@ -209,20 +231,34 @@ final class HotReloadOrchestrator {
     _compiler.accept();
 
     // --- 4. asset の evict -------------------------------------------------
-    if (changedAssets.isNotEmpty) {
-      await _measure(stageEvict, timings, () async {
-        for (final ChangedAsset asset in changedAssets) {
-          await _vmService.evict(isolateId, asset.archivePath);
-        }
-      });
-    }
+    // ここから先は accept 済みなので reject できない。失敗しても
+    // 計測値だけは残す。どの段で落ちたかが分からないと切り分けできない。
+    try {
+      if (changedAssets.isNotEmpty) {
+        await _measure(stageEvict, timings, () async {
+          for (final ChangedAsset asset in changedAssets) {
+            await _vmService.evict(isolateId, asset.archivePath);
+          }
+        });
+      }
 
-    // --- 5. reassemble -----------------------------------------------------
-    await _measure(
-      stageReassemble,
-      timings,
-      () => _vmService.reassemble(isolateId),
-    );
+      // --- 5. reassemble ---------------------------------------------------
+      await _measure(
+        stageReassemble,
+        timings,
+        () => _vmService.reassemble(isolateId),
+      );
+    } on Object catch (error, stackTrace) {
+      _logger?.error(
+        'ホットリロードが失敗しました',
+        fields: <String, Object?>{
+          'failedStage': _lastStage(timings),
+          'error': '$error',
+          ...timings,
+        },
+      );
+      Error.throwWithStackTrace(error, stackTrace);
+    }
 
     final HotReloadResult result = HotReloadResult(
       status: HotReloadStatus.success,
@@ -241,6 +277,20 @@ final class HotReloadOrchestrator {
     );
     return result;
   }
+
+  /// 確認待ちなら [CompilerContract.reject] を送る。
+  ///
+  /// 適用していない差分を確認待ちのまま残すと、次回の recompile に
+  /// 含まれなくなる。
+  Future<void> _rejectIfPending() async {
+    if (_compiler.needsConfirmation) {
+      await _compiler.reject();
+    }
+  }
+
+  /// 最後に計測を開始した段。例外が出た段を指す。
+  static String _lastStage(Map<String, int> timings) =>
+      timings.keys.isEmpty ? '(なし)' : timings.keys.last;
 
   /// [action] の所要時間を [timings] に記録する。
   ///
