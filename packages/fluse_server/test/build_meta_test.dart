@@ -154,6 +154,21 @@ void main() {
         '-DY=1',
       ]);
     });
+
+    test('引用符が閉じていなければ例外にする', () {
+      // 途中で切れたログを黙って通すと、値の欠けた dartDefines を
+      // 記録してしまい、以後ずっと不一致で止まる。
+      expect(
+        () => BuildMetaParser.tokenize('--packages "/My Apps/a.json'),
+        throwsA(
+          isA<BuildMetaException>().having(
+            (BuildMetaException e) => e.toString(),
+            'message',
+            contains('閉じていません'),
+          ),
+        ),
+      );
+    });
   });
 
   group('BuildMeta の入出力', () {
@@ -164,7 +179,13 @@ void main() {
     );
 
     test('往復できる', () {
-      expect(BuildMeta.fromJson(meta.toJson()).dartDefines, meta.dartDefines);
+      final BuildMeta restored = BuildMeta.fromJson(meta.toJson());
+
+      expect(restored.dartDefines, meta.dartDefines);
+      expect(restored.trackWidgetCreation, meta.trackWidgetCreation);
+      expect(restored.enableAsserts, meta.enableAsserts);
+      expect(restored.schemaVersion, BuildMeta.currentSchemaVersion);
+      expect(restored.differencesFrom(meta), isEmpty);
     });
 
     test('ファイルに書いて読める', () {
@@ -202,6 +223,45 @@ void main() {
             (BuildMetaException e) => e.toString(),
             'message',
             contains(file.path),
+          ),
+        ),
+      );
+    });
+
+    test('schemaVersion の型が違えば「無い」と区別して報告する', () {
+      final File file = File('${temp.path}/build_meta.json')
+        ..writeAsStringSync(
+          jsonEncode(<String, Object?>{
+            ...meta.toJson(),
+            'schemaVersion': 'いち',
+          }),
+        );
+
+      expect(
+        () => BuildMeta.readFrom(file),
+        throwsA(
+          isA<BuildMetaException>().having(
+            (BuildMetaException e) => e.toString(),
+            'message',
+            contains('整数ではありません'),
+          ),
+        ),
+      );
+    });
+
+    test('schemaVersion が 0 以下なら不正として扱う', () {
+      final File file = File('${temp.path}/build_meta.json')
+        ..writeAsStringSync(
+          jsonEncode(<String, Object?>{...meta.toJson(), 'schemaVersion': 0}),
+        );
+
+      expect(
+        () => BuildMeta.readFrom(file),
+        throwsA(
+          isA<BuildMetaException>().having(
+            (BuildMetaException e) => e.toString(),
+            'message',
+            contains('不正'),
           ),
         ),
       );

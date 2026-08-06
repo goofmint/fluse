@@ -124,6 +124,13 @@ abstract final class BuildMetaParser {
     }
     flush();
 
+    if (quote != null) {
+      // 部分的なトークンを黙って返すと、値の欠けた dartDefines を
+      // build_meta.json に記録してしまう。以後 `fluse start` は常に
+      // 不一致で止まり、原因が解析の破損だと分からなくなる。
+      throw BuildMetaException('コマンド行の引用符 $quote が閉じていません: $commandLine');
+    }
+
     return tokens;
   }
 }

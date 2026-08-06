@@ -243,7 +243,11 @@ void main() {
           isA<CompilerException>().having(
             (CompilerException e) => e.toString(),
             'message',
-            contains('--enable-asserts'),
+            allOf(
+              contains('--enable-asserts'),
+              contains('記録=true'),
+              contains('現在=false'),
+            ),
           ),
         ),
       );
@@ -261,7 +265,7 @@ void main() {
           isA<CompilerException>().having(
             (CompilerException e) => e.toString(),
             'message',
-            contains('-D'),
+            allOf(contains('-D'), contains('EXTRA=1')),
           ),
         ),
       );
@@ -275,8 +279,8 @@ void main() {
       await expectLater(
         target.start(),
         throwsA(
-          isA<BuildMetaException>().having(
-            (BuildMetaException e) => e.toString(),
+          isA<CompilerException>().having(
+            (CompilerException e) => e.toString(),
             'message',
             contains('fluse init'),
           ),
@@ -294,8 +298,8 @@ void main() {
       await expectLater(
         target.start(),
         throwsA(
-          isA<BuildMetaException>().having(
-            (BuildMetaException e) => e.toString(),
+          isA<CompilerException>().having(
+            (CompilerException e) => e.toString(),
             'message',
             contains(file.path),
           ),
@@ -305,6 +309,9 @@ void main() {
 
     test('buildMetaPath を渡さなければ突合しない', () async {
       // APK ビルドを伴わない単体テスト用の経路。
+      // 不一致になる build_meta を置いても、パス未指定なら読まれない。
+      writeBuildMeta(trackWidgetCreation: false, enableAsserts: false);
+
       await startService();
 
       expect(service.isRunning, isTrue);

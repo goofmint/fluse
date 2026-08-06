@@ -47,6 +47,7 @@ final class BuildMeta {
   /// 場合に後勝ちで解決するため、順序が変われば結果も変わりうる。
   final List<String> dartDefines;
 
+  /// 読み込んだ `build_meta.json` の形式版。既定は [currentSchemaVersion]。
   final int schemaVersion;
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -58,8 +59,16 @@ final class BuildMeta {
 
   static BuildMeta fromJson(Map<String, Object?> json) {
     final Object? version = json['schemaVersion'];
-    if (version is! int) {
+    if (version == null) {
       throw const BuildMetaException('schemaVersion がありません');
+    }
+    if (version is! int) {
+      // 「無い」と「型が違う」を区別する。壊れた build_meta.json の
+      // 原因を特定できるようにするため。
+      throw BuildMetaException('schemaVersion が整数ではありません: $version');
+    }
+    if (version < 1) {
+      throw BuildMetaException('schemaVersion $version は不正です');
     }
     if (version > currentSchemaVersion) {
       throw BuildMetaException(
@@ -69,8 +78,11 @@ final class BuildMeta {
     }
 
     final Object? defines = json['dartDefines'];
-    if (defines is! List) {
+    if (defines == null) {
       throw const BuildMetaException('dartDefines がありません');
+    }
+    if (defines is! List) {
+      throw BuildMetaException('dartDefines が配列ではありません: $defines');
     }
 
     return BuildMeta(
@@ -150,8 +162,11 @@ final class BuildMeta {
 
   static bool _requireBool(Map<String, Object?> json, String key) {
     final Object? value = json[key];
-    if (value is! bool) {
+    if (value == null) {
       throw BuildMetaException('$key がありません');
+    }
+    if (value is! bool) {
+      throw BuildMetaException('$key が真偽値ではありません: $value');
     }
     return value;
   }

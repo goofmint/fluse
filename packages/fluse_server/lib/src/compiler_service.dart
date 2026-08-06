@@ -182,6 +182,10 @@ final class CompilerService implements CompilerContract {
   ];
 
   /// プロセスを起動する。
+  ///
+  /// [buildMetaPath] を指定している場合は、起動前にビルドフラグを突き合わせ、
+  /// 不一致なら [CompilerException] を投げる。読み込みの失敗も同じ型に
+  /// 揃えてある。
   Future<void> start() async {
     if (_process != null) {
       throw const CompilerException('すでに起動しています');
@@ -351,7 +355,15 @@ final class CompilerService implements CompilerContract {
       return;
     }
 
-    final BuildMeta recorded = BuildMeta.readFrom(File(path));
+    final BuildMeta recorded;
+    try {
+      recorded = BuildMeta.readFrom(File(path));
+    } on BuildMetaException catch (error) {
+      // 起動前検証の失敗は CompilerException に揃える。呼び出し元が
+      // 2種類の例外を捕まえ分ける必要が無いようにする。原因は元の
+      // メッセージをそのまま含める。
+      throw CompilerException('ビルドフラグの記録を読めません: ${error.message}');
+    }
     final List<String> differences = recorded.differencesFrom(buildMeta);
     if (differences.isEmpty) {
       return;
