@@ -1,0 +1,5 @@
+.gradle/
+build/
+
+# Kotlin コンパイラが吐く失敗ログ。原因調査用の一時ファイル。
+.kotlin/

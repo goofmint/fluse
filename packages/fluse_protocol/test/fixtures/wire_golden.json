@@ -1,0 +1,178 @@
+{
+  "_comment": "Dart と Kotlin の両方が読む唯一のワイヤ仕様。どちらかを変えたら必ずここも変え、両方のテストを通すこと。",
+  "protocolVersion": 1,
+  "tunnelFrames": [
+    {
+      "name": "open",
+      "opcode": "open",
+      "streamId": 1,
+      "payloadHex": "",
+      "bytesHex": "0100000001"
+    },
+    {
+      "name": "close",
+      "opcode": "close",
+      "streamId": 255,
+      "payloadHex": "",
+      "bytesHex": "03000000ff"
+    },
+    {
+      "name": "data",
+      "opcode": "data",
+      "streamId": 16909060,
+      "payloadHex": "aa",
+      "bytesHex": "0201020304aa"
+    },
+    {
+      "name": "dataEmptyPayload",
+      "opcode": "data",
+      "streamId": 7,
+      "payloadHex": "",
+      "bytesHex": "0200000007"
+    },
+    {
+      "name": "maxStreamId",
+      "opcode": "data",
+      "streamId": 4294967295,
+      "payloadHex": "0011ff",
+      "bytesHex": "02ffffffff0011ff"
+    },
+    {
+      "name": "highBitStreamId",
+      "opcode": "open",
+      "streamId": 2147483648,
+      "payloadHex": "",
+      "bytesHex": "0180000000"
+    }
+  ],
+  "invalidTunnelFrames": [
+    { "name": "tooShort", "bytesHex": "020000" },
+    { "name": "unknownOpcode", "bytesHex": "0900000001" },
+    { "name": "openWithPayload", "bytesHex": "0100000001ff" }
+  ],
+  "messages": [
+    {
+      "name": "hello",
+      "json": {
+        "type": "hello",
+        "protocolVersion": 1,
+        "projectId": "counter_app-0123456789abcdef",
+        "flutterRevision": "00b0c91f06209d9e4a41f71b7a512d6eb3b9c694",
+        "dartVersion": "3.11.5",
+        "appVersion": "build-42",
+        "deviceId": "device-hash",
+        "deviceName": "Pixel 8"
+      }
+    },
+    {
+      "name": "helloWithTokens",
+      "json": {
+        "type": "hello",
+        "protocolVersion": 1,
+        "projectId": "p",
+        "flutterRevision": "r",
+        "dartVersion": "d",
+        "appVersion": "a",
+        "deviceId": "i",
+        "deviceName": "n",
+        "pairingToken": "PT-0123456789",
+        "deviceToken": "DT-0123456789"
+      }
+    },
+    {
+      "name": "vmServiceReady",
+      "json": {
+        "type": "vmServiceReady",
+        "vmServiceUri": "http://127.0.0.1:43219/authcode/"
+      }
+    },
+    { "name": "ready", "json": { "type": "ready" } },
+    {
+      "name": "log",
+      "json": { "type": "log", "level": "info", "message": "こんにちは" }
+    },
+    {
+      "name": "error",
+      "json": {
+        "type": "error",
+        "code": "TUNNEL_LOST",
+        "message": "切断されました",
+        "detail": "再接続します"
+      }
+    },
+    {
+      "name": "accept",
+      "json": {
+        "type": "accept",
+        "sessionId": "session-1",
+        "heartbeatIntervalMs": 15000,
+        "issuedDeviceToken": "DT-abcdefghij"
+      }
+    },
+    {
+      "name": "reject",
+      "json": {
+        "type": "reject",
+        "code": "PROTOCOL_MISMATCH",
+        "message": "fluse を更新してください"
+      }
+    },
+    { "name": "reload", "json": { "type": "reload" } },
+    {
+      "name": "compileError",
+      "json": {
+        "type": "compileError",
+        "summary": "コンパイルエラー 2 件",
+        "diagnostics": [
+          {
+            "severity": "error",
+            "message": "Expected ';'",
+            "file": "lib/main.dart",
+            "line": 12,
+            "col": 5
+          },
+          { "severity": "warning", "message": "位置なし" }
+        ]
+      }
+    },
+    { "name": "compileOk", "json": { "type": "compileOk" } },
+    {
+      "name": "ping",
+      "json": { "type": "ping", "seq": 7, "timestampMs": 1234567890 }
+    },
+    {
+      "name": "pong",
+      "json": { "type": "pong", "seq": 7, "timestampMs": 1234567890 }
+    },
+    { "name": "close", "json": { "type": "close", "code": "SHUTDOWN" } },
+    {
+      "name": "closeWithMessage",
+      "json": {
+        "type": "close",
+        "code": "SESSION_REPLACED",
+        "message": "別の接続に置き換わりました"
+      }
+    }
+  ],
+  "invalidMessages": [
+    { "name": "noType", "json": { "seq": 1 } },
+    { "name": "unknownType", "json": { "type": "teleport" } },
+    { "name": "missingField", "json": { "type": "ping", "seq": 1 } },
+    {
+      "name": "wrongType",
+      "json": { "type": "ping", "seq": "いち", "timestampMs": 1 }
+    },
+    {
+      "name": "unsafeInteger",
+      "json": { "type": "ping", "seq": 9007199254740992, "timestampMs": 1 }
+    },
+    {
+      "name": "unknownSeverity",
+      "json": {
+        "type": "compileError",
+        "summary": "s",
+        "diagnostics": [{ "severity": "fatal", "message": "m" }]
+      }
+    }
+  ]
+}
