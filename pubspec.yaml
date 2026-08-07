@@ -33,7 +33,11 @@ melos:
       # packageFilters + exec は該当パッケージが0件のとき
       # NoPackageFoundScriptException で落ちるため、melos exec を直接呼ぶ。
       # まだテストが1つも無い Phase 0 の時点でも正常終了させたい。
-      run: melos exec --dir-exists=test -- dart test
+      #
+      # `melos` ではなく `dart run melos:melos` を呼ぶ。CI には melos が
+      # global activate されておらず、素の `melos` は PATH に無い。
+      # dev_dependencies に固定した版が使われる点でもこちらが確実。
+      run: dart run melos:melos exec --dir-exists=test -- dart test
 
     format:
       description: 全パッケージのフォーマットを検査する（差分があれば失敗）。
