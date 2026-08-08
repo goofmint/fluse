@@ -133,17 +133,41 @@ void main() {
   test('未知のコードでも解析は成功する', () {
     // 新しいサーバのコードを古いアプリが受け取っても、文言は表示できる。
     // Kotlin 側も同じ標本で同じことを検証する。
-    final Map<String, Object?> json =
-        (golden['messages']! as List<Object?>)
-                .cast<Map<String, Object?>>()
-                .firstWhere(
-                  (Map<String, Object?> e) => e['name'] == 'rejectUnknownCode',
-                )['json']!
-            as Map<String, Object?>;
+    final Map<String, Object?> json = _sample(golden, 'rejectUnknownCode');
 
-    final RejectMessage reject = FluseMessage.fromJson(json) as RejectMessage;
+    final FluseMessage message = FluseMessage.fromJson(json);
+    expect(message, isA<RejectMessage>());
 
+    final RejectMessage reject = message as RejectMessage;
     expect(reject.knownCode, isNull);
     expect(reject.message, '将来の理由');
   });
+}
+
+/// `messages` から名前で1件引く。
+///
+/// ゴールデンが欠けていたり形が違ったりしたときに、null や cast の例外で
+/// 終わらせない。**共有仕様が壊れたときこそ、何が欠けているかを示す。**
+Map<String, Object?> _sample(Map<String, Object?> golden, String name) {
+  final Object? messages = golden['messages'];
+  if (messages is! List<Object?>) {
+    fail('ゴールデンに messages がありません');
+  }
+
+  for (final Object? entry in messages) {
+    if (entry is! Map<String, Object?>) {
+      fail('messages の要素がオブジェクトではありません');
+    }
+    if (entry['name'] != name) {
+      continue;
+    }
+
+    final Object? json = entry['json'];
+    if (json is! Map<String, Object?>) {
+      fail('$name の json がオブジェクトではありません');
+    }
+    return json;
+  }
+
+  fail('ゴールデンに $name がありません');
 }

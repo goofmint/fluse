@@ -32,6 +32,7 @@ CI（`.github/workflows/ci.yml`）ではこれを最初のジョブに置いて�
 
 ```console
 $ melos run check:protocol-version
+protocolVersion = 1（3 箇所すべて一致）
 ```
 
 **パッケージのテストから隣のパッケージを読むことはしない。** Task 4.1 で
@@ -44,12 +45,14 @@ Kotlin のソースが `fluse_runtime` へ移ると相対パスが壊れるう�
 ```console
 $ cd packages/fluse_protocol_kt
 $ ./gradlew test        # または gradle test
+BUILD SUCCESSFUL in 3s
 ```
 
 リポジトリのルートからは melos 経由でも実行できる。
 
 ```console
 $ melos run test:kotlin
+BUILD SUCCESSFUL in 3s
 ```
 
 **JDK 17 が必要**（Gradle 8.x は JDK 26 では動かない）。
