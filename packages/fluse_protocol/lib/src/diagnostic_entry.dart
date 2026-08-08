@@ -79,7 +79,10 @@ final class DiagnosticEntry {
     if (severity == null) {
       // 深刻度が分からないとオーバーレイの出し分けができない。
       // 黙って error に丸めると、警告で赤画面になる。
-      throw FluseProtocolException('$type: 未知の severity: $rawSeverity');
+      //
+      // **受け取った値そのものは載せない。** severity は相手が自由に
+      // 入れられるフィールドで、例外文はログに出る。Kotlin 側も同じ。
+      throw FluseProtocolException('$type: 未知の severity');
     }
 
     return DiagnosticEntry(

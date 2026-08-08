@@ -33,9 +33,24 @@ melos:
       # packageFilters + exec は該当パッケージが0件のとき
       # NoPackageFoundScriptException で落ちるため、melos exec を直接呼ぶ。
       # まだテストが1つも無い Phase 0 の時点でも正常終了させたい。
-      run: melos exec --dir-exists=test -- dart test
+      #
+      # `melos` ではなく `dart run melos:melos` を呼ぶ。CI には melos が
+      # global activate されておらず、素の `melos` は PATH に無い。
+      # dev_dependencies に固定した版が使われる点でもこちらが確実。
+      run: dart run melos:melos exec --dir-exists=test -- dart test
 
     format:
       description: 全パッケージのフォーマットを検査する（差分があれば失敗）。
       exec:
         command: dart format --output=none --set-exit-if-changed .
+
+    test:kotlin:
+      description: >-
+        fluse_protocol_kt（Kotlin 実装）のテストを実行する。
+        JDK 17 が必要。Dart 側の melos exec には乗らないので独立させる。
+      run: cd packages/fluse_protocol_kt && ./gradlew test
+
+    check:protocol-version:
+      description: >-
+        Dart / Kotlin / ゴールデンの protocolVersion が一致することを検査する。
+      run: dart run tool/check_protocol_version.dart
