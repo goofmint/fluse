@@ -38,6 +38,23 @@ class WireGoldenTest {
         }
     }
 
+    /** org.json の `similar` は JSONObject / JSONArray にしか無いので補う。 */
+    private fun Any?.similarTo(other: Any?): Boolean = when {
+        this is JSONObject && other is JSONObject -> similar(other)
+        this is JSONArray && other is JSONArray -> similar(other)
+        else -> this == other
+    }
+
+    /** `messages` から名前で1件引く。 */
+    private fun sample(name: String): JSONObject {
+        val array: JSONArray = golden.getJSONArray("messages")
+        for (i in 0 until array.length()) {
+            val entry = array.getJSONObject(i)
+            if (entry.getString("name") == name) return entry.getJSONObject("json")
+        }
+        error("ゴールデンに $name がありません")
+    }
+
     @Test
     fun `protocolVersion がゴールデンと一致する`() {
         assertEquals(golden.getInt("protocolVersion"), FLUSE_PROTOCOL_VERSION)
@@ -95,10 +112,18 @@ class WireGoldenTest {
             val json = sample.getJSONObject("json")
 
             val message = FluseMessage.fromJson(json)
+            val encoded = message.toJson()
 
+            // **値は出さない。** helloWithTokens のようにトークンを持つ
+            // 標本があり、失敗時に JSON 全体を出すとログへ流れる。
+            // 食い違ったキー名だけ挙げれば原因は追える。
             assertTrue(
-                json.similar(message.toJson()),
-                "$name の往復が一致しません: 期待 $json 実際 ${message.toJson()}",
+                json.similar(encoded),
+                "$name の往復が一致しません。食い違うキー: ${
+                    (json.keySet() + encoded.keySet())
+                        .filter { !json.opt(it).similarTo(encoded.opt(it)) }
+                        .sorted()
+                }",
             )
         }
     }
@@ -132,12 +157,8 @@ class WireGoldenTest {
     @Test
     fun `未知のコードでも解析は成功する`() {
         // 新しいサーバのコードを古いアプリが受け取っても、文言は表示できる。
-        val reject = FluseMessage.fromJson(
-            JSONObject()
-                .put("type", "reject")
-                .put("code", "FUTURE_REASON")
-                .put("message", "将来の理由"),
-        ) as RejectMessage
+        // 標本はゴールデン側に置き、Dart 側も同じ入力で検証する。
+        val reject = FluseMessage.fromJson(sample("rejectUnknownCode")) as RejectMessage
 
         assertNull(reject.knownCode)
         assertEquals("将来の理由", reject.message)
@@ -145,15 +166,16 @@ class WireGoldenTest {
 
     @Test
     fun `トークンは toString に出ない`() {
-        val hello = FluseMessage.fromJson(
-            golden.getJSONArray("messages").let { array ->
-                (0 until array.length())
-                    .map { array.getJSONObject(it) }
-                    .first { it.getString("name") == "helloWithTokens" }
-                    .getJSONObject("json")
-            },
-        )
+        val json = sample("helloWithTokens")
+        val hello = FluseMessage.fromJson(json)
 
-        assertTrue(!hello.toString().contains("0123456789"), hello.toString())
+        // 失敗メッセージに toString() を渡さない。渡すと、漏れている
+        // ことを報告するためにトークンをもう一度ログへ出すことになる。
+        for (field in listOf("pairingToken", "deviceToken")) {
+            assertTrue(
+                !hello.toString().contains(json.getString(field)),
+                "$field が toString() に出ています",
+            )
+        }
     }
 }

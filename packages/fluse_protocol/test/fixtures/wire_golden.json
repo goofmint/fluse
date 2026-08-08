@@ -75,8 +75,8 @@
         "appVersion": "a",
         "deviceId": "i",
         "deviceName": "n",
-        "pairingToken": "PT-0123456789",
-        "deviceToken": "DT-0123456789"
+        "pairingToken": "<placeholder-pairing-token>",
+        "deviceToken": "<placeholder-device-token>"
       }
     },
     {
@@ -106,7 +106,7 @@
         "type": "accept",
         "sessionId": "session-1",
         "heartbeatIntervalMs": 15000,
-        "issuedDeviceToken": "DT-abcdefghij"
+        "issuedDeviceToken": "<placeholder-issued-token>"
       }
     },
     {
@@ -115,6 +115,15 @@
         "type": "reject",
         "code": "PROTOCOL_MISMATCH",
         "message": "fluse を更新してください"
+      }
+    },
+    {
+      "_comment": "未知のコード。新しいサーバが増やした理由を古いアプリが受け取っても、解析に失敗せず文言を表示できること。",
+      "name": "rejectUnknownCode",
+      "json": {
+        "type": "reject",
+        "code": "FUTURE_REASON",
+        "message": "将来の理由"
       }
     },
     { "name": "reload", "json": { "type": "reload" } },

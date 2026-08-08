@@ -130,25 +130,20 @@ void main() {
     });
   });
 
-  group('Kotlin 実装との突合', () {
-    /// Kotlin 側の `ProtocolVersion.kt`。
-    final File kotlinVersion = File(
-      '../fluse_protocol_kt/src/main/kotlin/dev/fluse/protocol/ProtocolVersion.kt',
-    );
+  test('未知のコードでも解析は成功する', () {
+    // 新しいサーバのコードを古いアプリが受け取っても、文言は表示できる。
+    // Kotlin 側も同じ標本で同じことを検証する。
+    final Map<String, Object?> json =
+        (golden['messages']! as List<Object?>)
+                .cast<Map<String, Object?>>()
+                .firstWhere(
+                  (Map<String, Object?> e) => e['name'] == 'rejectUnknownCode',
+                )['json']!
+            as Map<String, Object?>;
 
-    test('protocolVersion が Dart と Kotlin で一致する', () {
-      // gradle を持たない環境でも、ここだけは `melos run test` で回る。
-      // 片方だけ上げると必ず落ちる。
-      if (!kotlinVersion.existsSync()) {
-        fail('Kotlin 実装が見つかりません: ${kotlinVersion.path}');
-      }
+    final RejectMessage reject = FluseMessage.fromJson(json) as RejectMessage;
 
-      final RegExpMatch? match = RegExp(
-        r'const val FLUSE_PROTOCOL_VERSION\s*=\s*(\d+)',
-      ).firstMatch(kotlinVersion.readAsStringSync());
-
-      expect(match, isNotNull, reason: 'Kotlin 側の定数が見つかりません');
-      expect(int.parse(match!.group(1)!), fluseProtocolVersion);
-    });
+    expect(reject.knownCode, isNull);
+    expect(reject.message, '将来の理由');
   });
 }

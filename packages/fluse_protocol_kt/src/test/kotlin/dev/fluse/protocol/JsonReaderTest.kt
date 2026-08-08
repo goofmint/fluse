@@ -1,8 +1,10 @@
 package dev.fluse.protocol
 
+import java.math.BigDecimal
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import org.json.JSONObject
 
@@ -38,6 +40,55 @@ class JsonReaderTest {
                 .put("type", "ping")
                 .put("seq", 9007199254740991L)
                 .put("timestampMs", -9007199254740991L),
+        ) as PingMessage
+
+        assertEquals(9007199254740991L, message.seq)
+        assertEquals(-9007199254740991L, message.timestampMs)
+    }
+
+    /**
+     * JSON テキストを経由すると、org.json は小数表記を `BigDecimal` にする
+     * （`Double` ではない）。ワイヤから届く経路はこちらなので、`Double` の
+     * 枝だけでは Dart が通す値を Kotlin が弾いてしまう。
+     */
+    @Test
+    fun `テキスト経由の小数表記は BigDecimal で届く`() {
+        val parsed = JSONObject("""{"type":"ping","seq":1.0,"timestampMs":1e3}""")
+
+        assertIs<BigDecimal>(parsed.get("seq"))
+
+        val message = FluseMessage.fromJson(parsed) as PingMessage
+        assertEquals(1L, message.seq)
+        assertEquals(1000L, message.timestampMs)
+    }
+
+    @Test
+    fun `テキスト経由の小数は受け入れない`() {
+        assertFailsWith<FluseProtocolException> {
+            FluseMessage.fromJson(JSONObject("""{"type":"ping","seq":7.5,"timestampMs":1}"""))
+        }
+    }
+
+    @Test
+    fun `テキスト経由でも安全範囲外は拒否する`() {
+        // 桁数だけ見て弾く経路。展開すると巨大な BigInteger になる。
+        assertFailsWith<FluseProtocolException> {
+            FluseMessage.fromJson(
+                JSONObject("""{"type":"ping","seq":1e2000000000,"timestampMs":1}"""),
+            )
+        }
+        // 桁数は収まるが範囲外、という境界のすぐ外側。
+        assertFailsWith<FluseProtocolException> {
+            FluseMessage.fromJson(
+                JSONObject("""{"type":"ping","seq":9007199254740992.0,"timestampMs":1}"""),
+            )
+        }
+    }
+
+    @Test
+    fun `テキスト経由でも安全範囲の境界は受け入れる`() {
+        val message = FluseMessage.fromJson(
+            JSONObject("""{"type":"ping","seq":9007199254740991.0,"timestampMs":-9007199254740991}"""),
         ) as PingMessage
 
         assertEquals(9007199254740991L, message.seq)

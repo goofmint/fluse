@@ -41,7 +41,10 @@ class DiagnosticEntry(
             val severity = DiagnosticSeverity.tryParse(rawSeverity)
                 // 深刻度が分からないとオーバーレイの出し分けができない。
                 // 黙って error に丸めると、警告で赤画面になる。
-                ?: throw FluseProtocolException("$TYPE: 未知の severity: $rawSeverity")
+                //
+                // **受け取った値そのものは載せない。** severity は相手が
+                // 自由に入れられるフィールドで、例外文はログに出る。
+                ?: throw FluseProtocolException("$TYPE: 未知の severity")
 
             return DiagnosticEntry(
                 severity = severity,

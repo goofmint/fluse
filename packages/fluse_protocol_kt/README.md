@@ -25,17 +25,19 @@ packages/fluse_protocol/test/fixtures/wire_golden.json
 
 片方だけ変更すると、もう片方のテストが落ちる。
 
-`protocolVersion` の突合だけは Gradle を持たない環境でも回るよう、
-Dart 側のテストが Kotlin のソースを読んで比較する。
-
-さらにテスト環境の準備すら要らない突合として
-`tool/check_protocol_version.dart` がある。Dart 定数・Kotlin 定数・
-ゴールデンの 3 箇所を正規表現と JSON だけで読み、食い違えば落ちる。
+`protocolVersion` は Dart 定数・Kotlin 定数・ゴールデンの 3 箇所にある。
+突合はリポジトリ直下の `tool/check_protocol_version.dart` に集約した。
+正規表現と JSON だけで読むので、Gradle も Dart のテスト環境も要らない。
 CI（`.github/workflows/ci.yml`）ではこれを最初のジョブに置いている。
 
 ```console
 $ melos run check:protocol-version
 ```
+
+**パッケージのテストから隣のパッケージを読むことはしない。** Task 4.1 で
+Kotlin のソースが `fluse_runtime` へ移ると相対パスが壊れるうえ、
+`fluse_protocol` 単体を取り出した環境でテストが落ちる。突合の置き場所は
+この 1 箇所だけにする。
 
 ## テスト
 

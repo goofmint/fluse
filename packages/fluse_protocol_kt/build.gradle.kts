@@ -23,6 +23,16 @@ kotlin {
 
 tasks.test {
     useJUnitPlatform()
+
+    // ゴールデンは Gradle の外（Dart パッケージ側）にあり、WireGoldenTest が
+    // 実行時に相対パスで読む。**入力として宣言しないと**、ゴールデンだけを
+    // 変えたときに test が UP-TO-DATE で飛ばされ、「片方だけ直すと
+    // もう片方が落ちる」という保証がそのまま効かなくなる。
+    inputs
+        .file(layout.projectDirectory.file("../fluse_protocol/test/fixtures/wire_golden.json"))
+        .withPropertyName("wireGolden")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+
     testLogging {
         events("passed", "failed", "skipped")
     }
