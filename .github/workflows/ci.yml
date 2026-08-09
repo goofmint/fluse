@@ -1,0 +1,95 @@
+# Dart 側と Kotlin 側を別ジョブで回す。
+#
+# 両者は同じワイヤ表現を別言語で手書きしている（設計 §9.1）。
+# 片方だけ緑になっても意味が無いので、`protocol-version` ジョブで
+# 定数の突合を、各テストジョブで共有ゴールデン
+# （packages/fluse_protocol/test/fixtures/wire_golden.json）の突合を行う。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同じブランチへの push が続いたときは古い実行を打ち切る。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Kotlin 2.1 系のコンパイラは新しすぎる JDK を解釈できない。
+  # ここを上げるときは build.gradle.kts の jvmToolchain も合わせる。
+  JAVA_VERSION: "17"
+
+jobs:
+  # 正規表現だけで完結するので最初に落ちてほしい。テスト環境の
+  # 準備を待たずに「版がずれている」と分かる。
+  #
+  # `tool/` はワークスペースのメンバではなく melos の format / analyze が
+  # 届かない。ここで面倒を見る。
+  protocol-version:
+    name: protocolVersion 突合
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: 依存解決
+        run: dart pub get
+
+      - name: tool/ のフォーマット検査
+        run: dart format --output=none --set-exit-if-changed tool
+
+      - name: tool/ の静的解析
+        run: dart analyze --fatal-infos --fatal-warnings tool
+
+      - name: 突合
+        run: dart run tool/check_protocol_version.dart
+
+  dart:
+    name: Dart (analyze / format / test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      # pub workspaces なのでルートの 1 回でメンバ全部が解決される。
+      - name: 依存解決
+        run: dart pub get
+
+      - name: フォーマット検査
+        run: dart run melos run format
+
+      - name: 静的解析
+        run: dart run melos run analyze
+
+      - name: テスト
+        run: dart run melos run test
+
+  kotlin:
+    name: Kotlin (gradle test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/fluse_protocol_kt
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # WireGoldenTest が ../fluse_protocol/test/fixtures/wire_golden.json を
+      # 相対パスで読む。checkout 済みのリポジトリ内なので追加の準備は要らない。
+      - name: テスト
+        run: ./gradlew test --no-daemon

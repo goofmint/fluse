@@ -362,6 +362,8 @@ void main() {
 
     test('未知の severity は失敗する', () {
       // 深刻度が分からないとオーバーレイの出し分けができない。
+      // ただし**受け取った値は例外文に載せない**。severity は相手が自由に
+      // 入れられるフィールドで、例外文はログに出る。
       expect(
         () => FluseMessage.fromJson(<String, Object?>{
           'type': 'compileError',
@@ -374,7 +376,7 @@ void main() {
           isA<FluseProtocolException>().having(
             (FluseProtocolException e) => e.message,
             'message',
-            contains('fatal'),
+            allOf(contains('severity'), isNot(contains('fatal'))),
           ),
         ),
       );
