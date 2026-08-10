@@ -14,7 +14,13 @@ repositories {
 
 dependencies {
     implementation("org.json:json:20240303")
+
+    // FluseTunnel は streamId ごとに coroutine を立てて双方向にコピーする。
+    // JVM のブロッキング Socket を使うため、実行は Dispatchers.IO に載せる。
+    api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+
     testImplementation(kotlin("test"))
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 }
 
 kotlin {
