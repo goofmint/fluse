@@ -15,6 +15,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -79,6 +80,12 @@ class FluseTunnel(
         require(READ_BUFFER_LENGTH <= TunnelFrame.MAX_PAYLOAD_LENGTH) {
             "READ_BUFFER_LENGTH が 1 フレームの上限を超えています"
         }
+        // **ここで弾かないと open のたびに InetSocketAddress が
+        // IllegalArgumentException を投げる。** それは受信ループまで
+        // 抜けてトンネル全体を終わらせる。フレーム1つで中継が死ぬ。
+        require(vmServicePort in 1..65535) {
+            "vmServicePort が範囲外です: $vmServicePort"
+        }
     }
 
     /**
@@ -101,6 +108,10 @@ class FluseTunnel(
     private val closing = AtomicBoolean(false)
     private val terminated = CompletableDeferred<Unit>()
 
+    /** [start] の二重起動よけ。判定と代入の間で割り込まれてはいけない。 */
+    private val started = AtomicBoolean(false)
+
+    @Volatile
     private var receiveJob: Job? = null
 
     /** 受信が失敗した理由。[close] が [done] をこれで終わらせる。 */
@@ -121,7 +132,9 @@ class FluseTunnel(
 
     /** 受信ループを開始する。2度目以降は何もしない。 */
     fun start() {
-        if (receiveJob != null) {
+        // 素の null 判定では、同時に呼ばれたときに受信ループが2本立ち、
+        // channel.incoming を二重に collect する。
+        if (!started.compareAndSet(false, true)) {
             return
         }
         receiveJob = scope.launch {
@@ -201,9 +214,25 @@ class FluseTunnel(
 
         val socket = try {
             withContext(Dispatchers.IO) {
-                Socket().apply {
-                    connect(InetSocketAddress(LOOPBACK, vmServicePort), CONNECT_TIMEOUT_MS)
+                val candidate = Socket()
+                try {
+                    candidate.connect(
+                        InetSocketAddress(LOOPBACK, vmServicePort),
+                        CONNECT_TIMEOUT_MS,
+                    )
+                } catch (e: Throwable) {
+                    // **失敗した Socket も閉じる。** connect の途中で
+                    // ディスクリプタが割り当たっていることがある。VM Service が
+                    // まだ立っていない間 open は繰り返し届くので、
+                    // 放置すると失敗のたびに溜まる。
+                    try {
+                        candidate.close()
+                    } catch (_: IOException) {
+                        // 生成直後に閉じられない場合は何もしなくてよい。
+                    }
+                    throw e
                 }
+                candidate
             }
         } catch (_: IOException) {
             // VM Service がまだ立っていない / 落ちた。開けないことを伝える。
@@ -342,12 +371,20 @@ class FluseTunnel(
 
         private val disposed = AtomicBoolean(false)
 
-        /** 書き込み待ちに積む。積めなければ false。 */
+        /**
+         * 書き込み待ちに積む。積めなければ false。
+         *
+         * **捕まえるのは行き先が閉じた場合だけ。** `Throwable` で受けると
+         * 満杯で待っている間の `CancellationException` まで飲み込む。
+         * キャンセルが伝播しなくなるうえ、畳んでいる最中に相手へ
+         * `close` を送りにいく。
+         */
         suspend fun enqueue(payload: ByteArray): Boolean =
             try {
                 outbound.send(payload)
                 true
-            } catch (_: Throwable) {
+            } catch (_: ClosedSendChannelException) {
+                // 既に破棄されたストリーム。呼び出し元が畳む。
                 false
             }
 

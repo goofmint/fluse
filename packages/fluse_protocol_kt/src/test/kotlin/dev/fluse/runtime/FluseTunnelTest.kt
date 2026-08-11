@@ -7,10 +7,10 @@ import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -39,10 +39,21 @@ class FluseTunnelTest {
         @Volatile
         var failSend: Boolean = false
 
+        private val failedAttempts = AtomicInteger(0)
+
+        /**
+         * 失敗した送信の試行回数。
+         *
+         * 失敗した送信は `sent` に何も残さないので、「何が送られたか」だけを
+         * 見ていると**送ろうとしたかどうかを区別できない**。回数を数える。
+         */
+        val failedSendCount: Int get() = failedAttempts.get()
+
         override val incoming: Flow<ByteArray> get() = inbound.receiveAsFlow()
 
         override suspend fun send(frame: ByteArray) {
             if (failSend) {
+                failedAttempts.incrementAndGet()
                 throw IOException("送信できません")
             }
             sent.send(TunnelFrame.decode(frame))
@@ -147,8 +158,26 @@ class FluseTunnelTest {
             }
         }
 
-        /** 受け付けた接続がすべて閉じているか。 */
-        fun allClosed(): Boolean = synchronized(accepted) { accepted.all { it.isClosed || !it.isConnected } }
+        /**
+         * 受け付けた接続がすべて閉じているか。
+         *
+         * `isConnected` は見ない。**一度でも繋がれば切断後も true** なので、
+         * `accept()` が返したソケットでは常に true になり判定にならない。
+         */
+        fun allClosed(): Boolean = synchronized(accepted) { accepted.all { it.isClosed } }
+
+        /**
+         * すべて閉じるまで待つ。
+         *
+         * サーバ側の close は `echo()` の finally で別スレッドが走らせる。
+         * `done` が完了した瞬間にはまだ閉じていないことがある。
+         * 上限は呼び出し側の `withTimeout` が担保する。
+         */
+        suspend fun awaitAllClosed() {
+            while (!allClosed()) {
+                kotlinx.coroutines.yield()
+            }
+        }
 
         override fun close() {
             server.close()
@@ -295,11 +324,36 @@ class FluseTunnelTest {
         }
     }
 
+    /**
+     * 誰も待ち受けていないポートを探す。
+     *
+     * エフェメラルポートを取って閉じるだけでは足りない。閉じた瞬間に
+     * OS が他へ割り当てることがあり、その場合 `FluseTunnel` は接続に
+     * 成功して close が返らず、タイムアウトまで原因不明で止まる。
+     * 実際に拒否されることを確かめてから使う。
+     *
+     * 確認と本番の間にはなお隙間がある。再試行で十分に薄めている。
+     */
+    private fun findRefusedPort(attempts: Int = 20): Int {
+        val loopback = InetAddress.getByName(FluseTunnel.LOOPBACK)
+        repeat(attempts) {
+            val port = ServerSocket(0, 1, loopback).use { it.localPort }
+            val refused = try {
+                Socket().use { it.connect(java.net.InetSocketAddress(loopback, port), 200) }
+                false
+            } catch (_: IOException) {
+                true
+            }
+            if (refused) {
+                return port
+            }
+        }
+        error("誰も待ち受けていないポートを $attempts 回試して見つけられませんでした")
+    }
+
     @Test
     fun `接続できなければ close を返す`() {
-        // 誰も待ち受けていないポートを用意する。
-        val deadPort = ServerSocket(0, 1, InetAddress.getByName(FluseTunnel.LOOPBACK))
-            .use { it.localPort }
+        val deadPort = findRefusedPort()
 
         val channel = FakeChannel()
         withTunnel(deadPort, channel) { tunnel ->
@@ -348,7 +402,7 @@ class FluseTunnelTest {
 
                 tunnel.done.await()
                 assertEquals(0, tunnel.activeStreams())
-                assertTrue(echo.allClosed(), "ソケットが解放されていません")
+                echo.awaitAllClosed()
             }
         }
     }
@@ -370,7 +424,10 @@ class FluseTunnelTest {
                     kotlinx.coroutines.yield()
                 }
 
-                // 送信が壊れているチャネルへ close を流そうとしていない。
+                // **失敗するのは data の送信 1 回だけ。** close は送ろうとしない。
+                // 回数を見ないと、notifyPeer の扱いを変えてもこのテストは通る。
+                assertEquals(1, channel.failedSendCount)
+
                 channel.failSend = false
                 assertEquals(null, channel.poll())
             }
