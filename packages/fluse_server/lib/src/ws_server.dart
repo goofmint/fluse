@@ -320,9 +320,9 @@ final class FluseConnection implements TunnelChannel {
       _handleFrame,
       onError: (Object error) {
         _logger?.warn('WebSocket でエラーが発生しました: $error');
-        unawaited(_teardown());
+        _teardownQuietly();
       },
-      onDone: () => unawaited(_teardown()),
+      onDone: _teardownQuietly,
     );
   }
 
@@ -409,7 +409,7 @@ final class FluseConnection implements TunnelChannel {
       // 設計 §6.1。認証前のトンネルフレームは事故ではなく攻撃を疑う。
       // 応答を返さず即切る。
       _logger?.warn('未認証の接続からトンネルフレームを受け取りました。切断します');
-      unawaited(_teardown());
+      _teardownQuietly();
       return;
     }
     if (!_tunnelIn.isClosed) {
@@ -443,7 +443,7 @@ final class FluseConnection implements TunnelChannel {
         // 生存確認できない。
         sendMessage(message.toPong());
       case CloseMessage():
-        unawaited(_teardown());
+        _teardownQuietly();
       default:
         if (!isAuthenticated) {
           // hello より前に来る制御メッセージは受け付けない。
@@ -468,7 +468,7 @@ final class FluseConnection implements TunnelChannel {
       case AuthRejected(:final RejectMessage reject):
         sendMessage(reject);
         // reject を送ってから切る。先に切ると理由が端末に届かない。
-        unawaited(_teardown());
+        _teardownQuietly();
       case AuthAccepted(:final AcceptMessage accept):
         _sessionId = accept.sessionId;
         sendMessage(accept);
@@ -489,7 +489,7 @@ final class FluseConnection implements TunnelChannel {
           'heartbeat がタイムアウトしました。切断します',
           fields: <String, Object?>{'missedPongs': _missedPongs},
         );
-        unawaited(_teardown());
+        _teardownQuietly();
         return;
       }
 
@@ -533,17 +533,45 @@ final class FluseConnection implements TunnelChannel {
     }
     _sessionId = null;
 
-    // **後始末が途中で失敗しても done は必ず完了させる。** ここで抜けると
-    // WsServer の集合に接続が残り続け、close() も1本の例外で止まる。
-    try {
-      await _subscription.cancel();
-      await _tunnelIn.close();
-      await _channel.sink.close();
-    } finally {
-      if (!_done.isCompleted) {
-        _done.complete();
+    // **1つ失敗しても残りは閉じる。** 途中で抜けると購読やストリームが
+    // 生き残り、done も完了しないので WsServer の集合に接続が残り続ける。
+    Object? failure;
+    StackTrace? trace;
+    Future<void> attempt(Future<void> Function() action) async {
+      try {
+        await action();
+      } on Object catch (error, stackTrace) {
+        // 最初の失敗だけを覚える。後続は原因の派生であることが多い。
+        failure ??= error;
+        trace ??= stackTrace;
       }
     }
+
+    await attempt(_subscription.cancel);
+    await attempt(_tunnelIn.close);
+    await attempt(_channel.sink.close);
+
+    if (!_done.isCompleted) {
+      _done.complete();
+    }
+
+    // 全て閉じ終えてから呼び出し元へ返す。close() を待っている側は
+    // 後始末が失敗したことを知る必要がある。
+    if (failure != null) {
+      Error.throwWithStackTrace(failure!, trace ?? StackTrace.current);
+    }
+  }
+
+  /// 後始末して、失敗はログに留める。
+  ///
+  /// イベント経由（onDone / onError / タイムアウト）の切断は待つ相手が
+  /// 居ない。そこから例外を投げると未処理の非同期エラーになる。
+  void _teardownQuietly() {
+    unawaited(
+      _teardown().catchError((Object error) {
+        _logger?.warn('接続の後始末に失敗しました: $error');
+      }),
+    );
   }
 }
 
