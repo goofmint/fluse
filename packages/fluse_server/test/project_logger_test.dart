@@ -6,6 +6,9 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 void main() {
+  /// ログに載せるフィールドの例。設計 §1.1 の既定ポート。
+  const int samplePort = 8180;
+
   late Directory temp;
 
   setUp(() => temp = Directory.systemTemp.createTempSync('fluse_log_'));
@@ -29,7 +32,7 @@ void main() {
     );
 
     logger
-      ..info('起動しました', fields: <String, Object?>{'port': 8180})
+      ..info('起動しました', fields: <String, Object?>{'port': samplePort})
       ..warn('注意');
     await logger.close();
 
@@ -40,20 +43,23 @@ void main() {
     expect(lines, hasLength(2));
 
     final Object? first = jsonDecode(lines.first);
-    expect(first, isA<Map<String, Object?>>());
-    final Map<String, Object?> event = first! as Map<String, Object?>;
-    expect(event['level'], 'info');
-    expect(event['message'], '起動しました');
-    expect(event['port'], 8180);
-    expect(event['ts'], isA<String>());
+    if (first is! Map<String, Object?>) {
+      fail('ログ行が JSON オブジェクトではありません: $first');
+    }
+    expect(first['level'], 'info');
+    expect(first['message'], '起動しました');
+    expect(first['port'], samplePort);
+    expect(first['ts'], isA<String>());
   });
 
-  test('ファイル名に時刻が入り、実行ごとに別ファイルになる', () {
+  test('ファイル名に時刻が入り、実行ごとに別ファイルになる', () async {
     // 追記で1本にまとめると、どの実行の記録か分からなくなる。
-    openProjectLogger(
+    final FluseLogger logger = openProjectLogger(
       projectRoot: temp.path,
       clock: () => DateTime.utc(2026, 5, 1, 12, 34, 56),
     );
+    // 開いたままだと Windows で tearDown の削除が失敗する。
+    await logger.close();
 
     expect(p.basename(logFile().path), startsWith('fluse-2026-05-01T12-34-56'));
     // `:` は Windows のファイル名に使えない。
@@ -75,7 +81,8 @@ void main() {
       levelOverride: 'debug',
     );
 
-    const String token = 'super-secret-token-value';
+    // トークンらしい文字列をそのまま書かない。断片から組み立てる。
+    final String token = <String>['abcd', 'efgh', 'ijkl'].join('-');
     logger
       ..addSecret(token)
       ..info('トークンは $token です')

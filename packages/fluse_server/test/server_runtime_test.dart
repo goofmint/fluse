@@ -599,13 +599,21 @@ void main() {
     );
     expect(logged, hasLength(1));
     expect(logged.single['level'], 'error');
-    final List<Object?> diagnostics =
-        logged.single['diagnostics']! as List<Object?>;
-    final Map<String, Object?> entry =
-        diagnostics.single! as Map<String, Object?>;
-    // CLI 向けには原文とエディタから開ける位置を出す。
-    expect(entry['raw'], contains('Error: 足りません'));
+
+    final Object? diagnostics = logged.single['diagnostics'];
+    if (diagnostics is! List<Object?> || diagnostics.length != 1) {
+      fail('診断が1件のリストではありません: $diagnostics');
+    }
+    final Object? entry = diagnostics.single;
+    if (entry is! Map<String, Object?>) {
+      fail('診断が JSON オブジェクトではありません: $entry');
+    }
+    // エディタから開ける位置と本文を出す。raw は載せない
+    // （CFE がソースの抜粋を続きに付けることがある）。
+    expect(entry['severity'], 'error');
     expect(entry['location'], 'lib/main.dart:3:5');
+    expect(entry['message'], '足りません');
+    expect(entry.containsKey('raw'), isFalse);
   });
 
   test('reloadSources の失敗は reloadRejected として届く', () async {
@@ -671,12 +679,13 @@ void main() {
     emitChange('pubspec.yaml');
     await nextMessage(client.queue);
 
-    expect(
-      logEvents().where(
-        (Map<String, Object?> e) => '${e['message']}'.contains('古くなりました'),
-      ),
-      isNotEmpty,
+    // 本文の部分一致では別のイベントでも通ってしまう。分類で見る。
+    final List<Map<String, Object?>> logged = eventsWithCode(
+      FluseErrorCode.appOutdated.wireValue,
     );
+    expect(logged, hasLength(1));
+    expect(logged.single['level'], 'warn');
+    expect(logged.single['files'], <String>[p.join(root, 'pubspec.yaml')]);
   });
 
   test('指紋対象の変更は APP_OUTDATED として届く', () async {

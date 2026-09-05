@@ -413,8 +413,11 @@ final class ServerRuntime {
         );
         // **CLI にも同じ内容を出す**（設計 §5.2）。端末を見ていない
         // ときに気付けないと、直したつもりで古い画面を見続ける。
-        // CLI 向けには raw（frontend_server の原文）と file:line:col を
-        // 出す。エディタから開ける形が要る。
+        //
+        // **raw は載せない。** CFE は診断の続きにソースの抜粋と
+        // キャレット行を付けることがあり、そこに何が写るかは制御できない。
+        // ログはファイルに残る（設計 §5.2）ので、位置と本文だけにする。
+        // 原文が要るのはコンソールへの即時表示で、そちらは CLI の責務。
         _logger?.error(
           result.summary,
           fields: <String, Object?>{
@@ -424,7 +427,7 @@ final class ServerRuntime {
                 <String, Object?>{
                   'severity': entry.severity.name,
                   if (entry.location != null) 'location': entry.location,
-                  'raw': entry.raw,
+                  'message': entry.message,
                 },
             ],
           },
@@ -461,7 +464,13 @@ final class ServerRuntime {
   void _onOutdated(ChangeSet changes) {
     // 指紋が変わった。増分では埋められないので作り直してもらう。
     // FileWatcher は既に監視を止めている。
-    _logger?.warn('Preview App が古くなりました。fluse rebuild が必要です');
+    _logger?.warn(
+      'Preview App が古くなりました。fluse rebuild が必要です',
+      fields: <String, Object?>{
+        'code': FluseErrorCode.appOutdated.wireValue,
+        'files': changes.fingerprintTargets.toList(),
+      },
+    );
     _session?.connection.sendMessage(
       ErrorMessage(
         code: FluseErrorCode.appOutdated.wireValue,
