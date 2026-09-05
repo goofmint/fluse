@@ -176,11 +176,19 @@ final class ChangeClassifier {
     // Gradle はモジュールごとに build/ を持つ。深さは決め打ちできない。
     // lib/build/ のような利用者のディレクトリまで巻き込まないよう、
     // android/ の中だけを対象にする。
-    if (segments.first == 'android') {
-      for (final String segment in segments.skip(1)) {
-        if (generatedAndroidDirs.contains(segment)) {
-          return true;
-        }
+    if (segments.first != 'android') {
+      return false;
+    }
+    for (final String segment in segments.skip(1)) {
+      // **ソースセットに入ったら以降は見ない。** `build` は Java /
+      // Kotlin のパッケージ名として正当で、
+      // `android/app/src/main/java/com/example/build/` は利用者のソース。
+      // Gradle の出力がソースセットの中に置かれることはない。
+      if (segment == 'src') {
+        return false;
+      }
+      if (generatedAndroidDirs.contains(segment)) {
+        return true;
       }
     }
     return false;

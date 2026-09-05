@@ -172,6 +172,23 @@ void main() {
       }
     });
 
+    test('パッケージ名が build のネイティブソースは除外しない', () {
+      // com.example.build は正当な Java / Kotlin のパッケージ名。
+      // Gradle の出力がソースセットの中に置かれることはない。
+      final ChangeClassifier c = build();
+
+      for (final String file in <String>[
+        'android/app/src/main/java/com/example/build/Config.java',
+        'android/app/src/main/kotlin/com/example/build/Config.kt',
+      ]) {
+        expect(
+          c.classify('$root/$file'),
+          ChangeKind.fingerprintTarget,
+          reason: file,
+        );
+      }
+    });
+
     test('lib/build は利用者のディレクトリなので除外しない', () {
       // android/ の外まで一律に落とすと、正当なソースを取りこぼす。
       final ChangeClassifier c = build();
