@@ -363,12 +363,12 @@ $flutterSection
 
     test('フォント宣言でも脱出できない', () {
       writeFile('../outside.ttf', 'font');
-      writePubspec("""
+      writePubspec('''
   fonts:
     - family: X
       fonts:
         - asset: ../outside.ttf
-""");
+''');
 
       expect(changedAssets(build().sync()), isEmpty);
     });
