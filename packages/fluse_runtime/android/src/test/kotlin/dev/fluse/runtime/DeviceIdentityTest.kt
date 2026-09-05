@@ -40,9 +40,15 @@ internal class DeviceIdentityTest {
     }
 
     @Test
-    fun `ANDROID_ID が空でも落ちない`() {
-        // 取れない端末がある。落とすとアプリごと起動しなくなる。
-        assertEquals(DeviceIdentity.DEVICE_ID_LENGTH, DeviceIdentity.hashAndroidId("").length)
+    fun `ANDROID_ID が取れない端末は代替 ID を使う`() {
+        // 空文字を hash に通すと、取れない端末どうしが同じ deviceId に
+        // なる。サーバから見て1台に見え、片方の登録が上書きされる。
+        val store = FluseStore(MemoryBacking())
+
+        val id = store.fallbackDeviceId()
+
+        assertEquals(DeviceIdentity.DEVICE_ID_LENGTH, id.length)
+        assertNotEquals(DeviceIdentity.hashAndroidId(""), id)
     }
 
     @Test

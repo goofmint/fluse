@@ -49,14 +49,27 @@ object DeviceIdentity {
         }
     }
 
-    /** この端末の `deviceId`。 */
+    /**
+     * この端末の `deviceId`。
+     *
+     * **ANDROID_ID が取れないときに固定値へ落としてはいけない。**
+     * 取れない端末どうしがサーバから見て1台に見え、片方の登録が
+     * もう片方を上書きする。取れなければ [store] が持つ端末ごとの
+     * 代替 ID を使う。
+     */
     @Suppress("HardwareIds")
-    fun deviceId(context: Context): String {
+    fun deviceId(
+        context: Context,
+        store: FluseStore,
+    ): String {
         val androidId =
             Settings.Secure.getString(
                 context.contentResolver,
                 Settings.Secure.ANDROID_ID,
-            ).orEmpty()
+            )
+        if (androidId.isNullOrEmpty()) {
+            return store.fallbackDeviceId()
+        }
         return hashAndroidId(androidId)
     }
 
