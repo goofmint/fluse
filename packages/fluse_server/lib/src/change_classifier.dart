@@ -104,6 +104,28 @@ final class ChangeClassifier {
     'res',
   };
 
+  /// プロジェクト直下にあれば中身を見ないディレクトリ。
+  ///
+  /// ツールの出力先。ここを見ると自分の書き込みで変更を検出し続ける。
+  static const Set<String> generatedRootDirs = <String>{
+    'build',
+    '.dart_tool',
+    '.flutter_preview',
+    '.git',
+    '.idea',
+  };
+
+  /// どの階層にあっても中身を見ないディレクトリ。
+  ///
+  /// Gradle はモジュールごとに `build/` を作り、その中に**マージ済みの
+  /// `AndroidManifest.xml`** を生成する。名前だけで指紋対象と判定すると、
+  /// ビルドのたびに監視が止まる。
+  static const Set<String> generatedAndroidDirs = <String>{
+    'build',
+    '.gradle',
+    '.cxx',
+  };
+
   /// [path] の種類を返す。相対パスはプロジェクトルート基準で解決する。
   ChangeKind classify(String path) {
     // `p.absolute(a, b)` は「b を基準に a を解く」ではなく **結合** なので
@@ -119,6 +141,10 @@ final class ChangeClassifier {
 
     final String relative = _toPosix(p.relative(absolute, from: projectRoot));
 
+    if (_isGenerated(relative)) {
+      return ChangeKind.ignored;
+    }
+
     if (_isFingerprintTarget(relative)) {
       // **asset より先に見る。** pubspec.yaml は両方に当たるが、
       // 宣言が変われば APK を作り直すしかない。
@@ -131,6 +157,33 @@ final class ChangeClassifier {
       return ChangeKind.asset;
     }
     return ChangeKind.ignored;
+  }
+
+  /// ツールが作ったファイルか。
+  ///
+  /// **指紋の判定より先に落とす。** そうしないと、Gradle が生成した
+  /// `android/app/build/.../AndroidManifest.xml` を指紋対象と見なして
+  /// 監視が止まる。`build/` と `.dart_tool/` を監視から外した意図と
+  /// 同じことを、分類の側でも守る必要がある。
+  bool _isGenerated(String relative) {
+    final List<String> segments = relative.split('/');
+    if (segments.isEmpty) {
+      return false;
+    }
+    if (generatedRootDirs.contains(segments.first)) {
+      return true;
+    }
+    // Gradle はモジュールごとに build/ を持つ。深さは決め打ちできない。
+    // lib/build/ のような利用者のディレクトリまで巻き込まないよう、
+    // android/ の中だけを対象にする。
+    if (segments.first == 'android') {
+      for (final String segment in segments.skip(1)) {
+        if (generatedAndroidDirs.contains(segment)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   bool _isDartSource(String relative) =>

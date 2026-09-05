@@ -145,6 +145,44 @@ void main() {
     });
   });
 
+  group('生成物', () {
+    test('Gradle が生成した AndroidManifest.xml は拾わない', () {
+      // 名前だけで判定すると、ビルドのたびに監視が止まる。
+      final ChangeClassifier c = build();
+
+      for (final String file in <String>[
+        'android/app/build/intermediates/merged_manifest/debug/AndroidManifest.xml',
+        'android/build/reports/x.gradle',
+        'android/.gradle/8.0/checksums.lock',
+        'android/app/.cxx/cmake/debug/x.txt',
+      ]) {
+        expect(c.classify('$root/$file'), ChangeKind.ignored, reason: file);
+      }
+    });
+
+    test('ツールの出力先は見ない', () {
+      final ChangeClassifier c = build();
+
+      for (final String file in <String>[
+        'build/app/outputs/x.apk',
+        '.dart_tool/package_config.json',
+        '.flutter_preview/fluse_main.dart',
+      ]) {
+        expect(c.classify('$root/$file'), ChangeKind.ignored, reason: file);
+      }
+    });
+
+    test('lib/build は利用者のディレクトリなので除外しない', () {
+      // android/ の外まで一律に落とすと、正当なソースを取りこぼす。
+      final ChangeClassifier c = build();
+
+      expect(
+        c.classify('$root/lib/build/generated.dart'),
+        ChangeKind.dartSource,
+      );
+    });
+  });
+
   test('プロジェクトの外は対象外', () {
     // 監視の網から漏れたイベントで誤って rebuild を要求しないため。
     expect(build().classify('/other/lib/main.dart'), ChangeKind.ignored);
