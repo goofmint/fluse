@@ -1,5 +1,6 @@
 package dev.fluse.runtime
 
+import java.security.SecureRandom
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -9,6 +10,18 @@ import kotlin.test.assertTrue
 
 internal class FluseStoreTest {
     private fun store() = FluseStore(MemoryBacking())
+
+    /**
+     * テスト用のトークン。
+     *
+     * **リテラルで書かない。** ダミーであっても、資格情報の形をした
+     * 文字列がリポジトリに残ると本物と見分けが付かない。
+     */
+    private fun token(): String {
+        val bytes = ByteArray(16)
+        SecureRandom().nextBytes(bytes)
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
 
     @Test
     fun `代替 deviceId は一度作ったら変わらない`() {
@@ -37,7 +50,7 @@ internal class FluseStoreTest {
     fun `空を書いたら消える`() {
         // 空文字が残ると hasDeviceToken が true になってしまう。
         val store = store()
-        store.deviceToken = "t"
+        store.deviceToken = token()
 
         store.deviceToken = ""
 
@@ -48,7 +61,7 @@ internal class FluseStoreTest {
     @Test
     fun `トークンと接続先が揃って初めて繋ぎ直せる`() {
         val store = store()
-        store.deviceToken = "t"
+        store.deviceToken = token()
 
         assertFalse(store.hasLastServer())
 
@@ -69,14 +82,19 @@ internal class FluseStoreTest {
     }
 
     @Test
-    fun `clear で登録が消える`() {
+    fun `clear で値そのものが既定へ戻る`() {
+        // **ポートが残ると危ない。** ホストだけ入れ直した時に、
+        // 前のポートと組み合わさって古い接続先へ繋ぎに行く。
         val store = store()
-        store.deviceToken = "t"
+        store.deviceToken = token()
         store.lastHost = "192.168.1.2"
         store.lastPort = 8080
 
         store.clear()
 
+        assertNull(store.deviceToken)
+        assertNull(store.lastHost)
+        assertEquals(FluseStore.NO_PORT, store.lastPort)
         assertFalse(store.hasDeviceToken())
         assertFalse(store.hasLastServer())
     }
@@ -85,9 +103,10 @@ internal class FluseStoreTest {
     fun `toString にトークンを含めない`() {
         // 例外文やログに混ざると漏れる。
         val store = store()
-        store.deviceToken = "s3cr3t-token"
+        val token = token()
+        store.deviceToken = token
 
-        assertFalse(store.toString().contains("s3cr3t"), store.toString())
+        assertFalse(store.toString().contains(token), store.toString())
     }
 
     @Test
