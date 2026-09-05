@@ -352,6 +352,12 @@ final class AssetBundleService {
 
   // --------------------------------------------------------------- パス計算
 
+  /// シンボリックリンクを解いたプロジェクトルート。
+  ///
+  /// macOS の `/var` のように、ルート自身がリンクを含むことがある。
+  /// 片側だけ解くと、正しいパスまで外と判定してしまう。
+  late final String _realRoot = _resolveLinks(projectRoot) ?? projectRoot;
+
   /// プロジェクトルートからの POSIX 相対パス。外に出るなら null。
   ///
   /// **プロジェクト外を弾くのがここの主目的。** 宣言は利用者が書く
@@ -364,7 +370,27 @@ final class AssetBundleService {
     if (!p.isWithin(projectRoot, absolute)) {
       return null;
     }
+
+    // **文字列の判定だけでは足りない。** プロジェクト内のリンクが外を
+    // 指していると、`../` を含まないまま外のファイルを読んでしまう。
+    final String? real = _resolveLinks(absolute);
+    if (real != null && !p.isWithin(_realRoot, real)) {
+      return null;
+    }
+
+    // archivePath は宣言上の位置のまま返す。リンク先の実体パスにすると、
+    // 端末側が探す場所と食い違う。
     return p.relative(absolute, from: projectRoot).replaceAll(r'\', '/');
+  }
+
+  /// リンクを解いた実体のパス。辿れなければ null。
+  String? _resolveLinks(String path) {
+    try {
+      return p.normalize(File(path).resolveSymbolicLinksSync());
+    } on FileSystemException {
+      // 実体が無い場合。存在しない宣言は呼び出し側が別途弾く。
+      return null;
+    }
   }
 
   /// DevFS 上の書き込み先。

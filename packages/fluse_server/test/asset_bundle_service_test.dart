@@ -8,12 +8,16 @@ import 'package:test/test.dart';
 
 void main() {
   late Directory temp;
+  late Directory outside;
   late String root;
   late MemoryLogSink sink;
   late FluseLogger logger;
 
   setUp(() {
     temp = Directory.systemTemp.createTempSync('fluse_assets_');
+    // プロジェクト外に置くファイルの行き先。固定名を使うと、並列実行の
+    // テスト同士が同じファイルを取り合う。
+    outside = Directory.systemTemp.createTempSync('fluse_outside_');
     root = temp.path;
     sink = MemoryLogSink();
     logger = FluseLogger(
@@ -22,7 +26,10 @@ void main() {
     );
   });
 
-  tearDown(() => temp.deleteSync(recursive: true));
+  tearDown(() {
+    temp.deleteSync(recursive: true);
+    outside.deleteSync(recursive: true);
+  });
 
   void writePubspec(String flutterSection) {
     File(p.join(root, 'pubspec.yaml')).writeAsStringSync('''
@@ -334,10 +341,14 @@ $flutterSection
   });
 
   group('プロジェクト外への脱出', () {
+    /// プロジェクト外に置いた秘密のファイル。
+    File writeOutside(String name) =>
+        File(p.join(outside.path, name))..writeAsStringSync('secret');
+
     test('.. を含む宣言は無視する', () {
       // 鍵ファイルのような無関係なファイルが DevFS 経由で端末へ渡る。
-      writeFile('../outside.txt', 'secret');
-      writePubspec('  assets:\n    - ../outside.txt\n');
+      final File secret = writeOutside('id_rsa');
+      writePubspec('  assets:\n    - ${p.relative(secret.path, from: root)}\n');
 
       final AssetSyncResult result = build().sync();
 
@@ -349,28 +360,42 @@ $flutterSection
     });
 
     test('絶対パスの宣言は無視する', () {
-      final File outside = File(p.join(temp.parent.path, 'fluse_outside.txt'))
-        ..writeAsStringSync('secret');
-      addTearDown(() {
-        if (outside.existsSync()) {
-          outside.deleteSync();
-        }
-      });
-      writePubspec('  assets:\n    - ${outside.path}\n');
+      final File secret = writeOutside('absolute.txt');
+      writePubspec('  assets:\n    - ${secret.path}\n');
 
       expect(changedAssets(build().sync()), isEmpty);
     });
 
     test('フォント宣言でも脱出できない', () {
-      writeFile('../outside.ttf', 'font');
-      writePubspec('''
-  fonts:
-    - family: X
-      fonts:
-        - asset: ../outside.ttf
-''');
+      final File secret = writeOutside('outside.ttf');
+      writePubspec(
+        '  fonts:\n'
+        '    - family: X\n'
+        '      fonts:\n'
+        '        - asset: ${p.relative(secret.path, from: root)}\n',
+      );
 
       expect(changedAssets(build().sync()), isEmpty);
+    });
+
+    test('シンボリックリンクでも脱出できない', () {
+      // 文字列の判定だけでは通ってしまう。`../` を含まないまま外を読む。
+      final File secret = writeOutside('linked.txt');
+      Directory(p.join(root, 'assets')).createSync(recursive: true);
+      Link(p.join(root, 'assets', 'linked.txt')).createSync(secret.path);
+      writePubspec('  assets:\n    - assets/linked.txt\n');
+
+      expect(changedAssets(build().sync()), isEmpty);
+    });
+
+    test('ディレクトリ宣言の中のリンクも弾く', () {
+      final File secret = writeOutside('in_dir.txt');
+      Directory(p.join(root, 'assets')).createSync(recursive: true);
+      writeFile('assets/ok.png', 'ok');
+      Link(p.join(root, 'assets', 'in_dir.txt')).createSync(secret.path);
+      writePubspec('  assets:\n    - assets/\n');
+
+      expect(changedAssets(build().sync()), <String>{'assets/ok.png'});
     });
   });
 
