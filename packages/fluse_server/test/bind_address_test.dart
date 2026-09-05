@@ -3,20 +3,6 @@ import 'dart:io';
 import 'package:fluse_server/fluse_server.dart';
 import 'package:test/test.dart';
 
-/// [NetworkInterface] を差し替えるための最小の偽物。
-final class FakeInterface implements NetworkInterface {
-  FakeInterface(this.name, this.addresses);
-
-  @override
-  final String name;
-
-  @override
-  final List<InternetAddress> addresses;
-
-  @override
-  int get index => 0;
-}
-
 void main() {
   group('isPrivateIPv4', () {
     test('RFC1918 の範囲を認める', () {
@@ -62,17 +48,16 @@ void main() {
   });
 
   group('resolveBindAddress', () {
-    Future<List<NetworkInterface>> interfaces(List<String> ips) async =>
-        <NetworkInterface>[
-          FakeInterface('en0', <InternetAddress>[
-            for (final String ip in ips) InternetAddress(ip),
-          ]),
-        ];
+    // NetworkInterface は偽装しない。addresses の要素型が SDK の版で変わる
+    // （3.13 で InterfaceAddress になった）ため、偽物を作ると特定の版でだけ
+    // 解析が落ちる。
+    Future<List<InternetAddress>> addresses(List<String> ips) async =>
+        <InternetAddress>[for (final String ip in ips) InternetAddress(ip)];
 
     test('host 指定があればそのまま使う', () async {
       final InternetAddress address = await resolveBindAddress(
         host: '127.0.0.1',
-        interfaces: () => interfaces(<String>['192.168.0.10']),
+        addresses: () => addresses(<String>['192.168.0.10']),
       );
 
       expect(address.address, '127.0.0.1');
@@ -81,7 +66,7 @@ void main() {
     test('0.0.0.0 の明示指定も尊重する（警告は呼び出し側の責務）', () async {
       final InternetAddress address = await resolveBindAddress(
         host: '0.0.0.0',
-        interfaces: () => interfaces(<String>['192.168.0.10']),
+        addresses: () => addresses(<String>['192.168.0.10']),
       );
 
       expect(address.address, '0.0.0.0');
@@ -96,7 +81,7 @@ void main() {
 
     test('host 未指定ならプライベート IPv4 を選ぶ', () async {
       final InternetAddress address = await resolveBindAddress(
-        interfaces: () => interfaces(<String>['203.0.113.5', '192.168.0.10']),
+        addresses: () => addresses(<String>['203.0.113.5', '192.168.0.10']),
       );
 
       expect(address.address, '192.168.0.10');
@@ -105,9 +90,7 @@ void main() {
     test('プライベート IPv4 が無ければ失敗する', () async {
       // 既定を 0.0.0.0 に倒すと、うっかり公衆 Wi-Fi でソースを晒す。
       await expectLater(
-        resolveBindAddress(
-          interfaces: () => interfaces(<String>['203.0.113.5']),
-        ),
+        resolveBindAddress(addresses: () => addresses(<String>['203.0.113.5'])),
         throwsA(isA<BindAddressException>()),
       );
     });

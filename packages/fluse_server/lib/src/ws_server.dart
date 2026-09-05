@@ -32,12 +32,12 @@ final class WsServer {
     this.apkPath,
     this.missedPongLimit = defaultMissedPongLimit,
     FluseLogger? logger,
-    Future<List<NetworkInterface>> Function()? interfaces,
+    Future<List<InternetAddress>> Function()? addresses,
     void Function(FluseConnection connection)? onAuthenticated,
     void Function(FluseConnection connection, FluseMessage message)? onMessage,
   }) : _sessions = sessionManager,
        _logger = logger,
-       _interfaces = interfaces,
+       _addresses = addresses,
        _onAuthenticated = onAuthenticated,
        _onMessage = onMessage;
 
@@ -69,7 +69,7 @@ final class WsServer {
 
   final SessionManager _sessions;
   final FluseLogger? _logger;
-  final Future<List<NetworkInterface>> Function()? _interfaces;
+  final Future<List<InternetAddress>> Function()? _addresses;
   final void Function(FluseConnection connection)? _onAuthenticated;
   final void Function(FluseConnection connection, FluseMessage message)?
   _onMessage;
@@ -105,7 +105,7 @@ final class WsServer {
 
     final InternetAddress bind = await resolveBindAddress(
       host: host,
-      interfaces: _interfaces,
+      addresses: _addresses,
     );
 
     if (isAnyHost(bind.address)) {
@@ -135,7 +135,13 @@ final class WsServer {
 
     // 反復中に集合が変わるのでコピーしてから回す。
     for (final FluseConnection connection in _connections.toList()) {
-      await connection.close(CloseCode.shutdown, 'サーバを終了します');
+      try {
+        await connection.close(CloseCode.shutdown, 'サーバを終了します');
+      } on Object catch (error) {
+        // 1本の失敗で残りの後始末を止めない。閉じ損ねた接続と
+        // 待ち受けが生き残る方が困る。
+        _logger?.warn('接続の切断に失敗しました: $error');
+      }
     }
     _connections.clear();
 
@@ -360,6 +366,11 @@ final class FluseConnection implements TunnelChannel {
 
   @override
   Future<void> send(List<int> frame) async {
+    // 閉じた sink への add は StateError になる。トンネルの送信は
+    // 接続断と競合するので、ここで見ないと切断のたびに例外が漏れる。
+    if (_closed) {
+      return;
+    }
     _channel.sink.add(frame);
   }
 
@@ -522,12 +533,16 @@ final class FluseConnection implements TunnelChannel {
     }
     _sessionId = null;
 
-    await _subscription.cancel();
-    await _tunnelIn.close();
-    await _channel.sink.close();
-
-    if (!_done.isCompleted) {
-      _done.complete();
+    // **後始末が途中で失敗しても done は必ず完了させる。** ここで抜けると
+    // WsServer の集合に接続が残り続け、close() も1本の例外で止まる。
+    try {
+      await _subscription.cancel();
+      await _tunnelIn.close();
+      await _channel.sink.close();
+    } finally {
+      if (!_done.isCompleted) {
+        _done.complete();
+      }
     }
   }
 }

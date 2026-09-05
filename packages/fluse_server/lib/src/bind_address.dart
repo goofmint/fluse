@@ -43,26 +43,31 @@ bool isPrivateIPv4(InternetAddress address) {
   };
 }
 
+/// この機に付いている IPv4 を全て集める。
+///
+/// **`NetworkInterface` を注入点にしない。** `addresses` の要素型は SDK の
+/// 版で変わる（3.13 で `InterfaceAddress` になった）ため、偽物を作ると
+/// 特定の版でだけ解析が落ちる。差し替えるのはアドレスの列にする。
+Future<List<InternetAddress>> _systemAddresses() async {
+  final List<NetworkInterface> interfaces = await NetworkInterface.list(
+    type: InternetAddressType.IPv4,
+    includeLoopback: false,
+    includeLinkLocal: false,
+  );
+  return <InternetAddress>[
+    for (final NetworkInterface interface in interfaces) ...interface.addresses,
+  ];
+}
+
 /// この機に付いているプライベート IPv4 を列挙する。
 ///
 /// 見つからなければ空。Wi-Fi に繋がっていない、あるいは仮想環境の中に
 /// 居る場合に起こりうる。
 Future<List<InternetAddress>> listPrivateIPv4({
-  Future<List<NetworkInterface>> Function()? interfaces,
+  Future<List<InternetAddress>> Function()? addresses,
 }) async {
-  final List<NetworkInterface> found =
-      await (interfaces ??
-          () => NetworkInterface.list(
-            type: InternetAddressType.IPv4,
-            includeLoopback: false,
-            includeLinkLocal: false,
-          ))();
-
-  return <InternetAddress>[
-    for (final NetworkInterface interface in found)
-      for (final InternetAddress address in interface.addresses)
-        if (isPrivateIPv4(address)) address,
-  ];
+  final List<InternetAddress> found = await (addresses ?? _systemAddresses)();
+  return found.where(isPrivateIPv4).toList();
 }
 
 /// 待ち受けるアドレスを決める。
@@ -75,7 +80,7 @@ Future<List<InternetAddress>> listPrivateIPv4({
 /// 逆に既定を `0.0.0.0` にすると、うっかり公衆 Wi-Fi でソースを晒す。
 Future<InternetAddress> resolveBindAddress({
   String? host,
-  Future<List<NetworkInterface>> Function()? interfaces,
+  Future<List<InternetAddress>> Function()? addresses,
 }) async {
   if (host != null) {
     final InternetAddress? parsed = InternetAddress.tryParse(host);
@@ -86,7 +91,7 @@ Future<InternetAddress> resolveBindAddress({
   }
 
   final List<InternetAddress> candidates = await listPrivateIPv4(
-    interfaces: interfaces,
+    addresses: addresses,
   );
   if (candidates.isEmpty) {
     throw BindAddressException(
