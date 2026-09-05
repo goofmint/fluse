@@ -5,17 +5,21 @@
 /// 反映経路そのものの実装は Task 1.2 以降で追加する。
 library;
 
+export 'src/auth_crypto.dart';
 export 'src/build_meta.dart';
 export 'src/build_meta_parser.dart';
 export 'src/compile_output.dart';
 export 'src/compiler_service.dart';
 export 'src/dev_fs_client.dart';
+export 'src/device_store.dart';
 export 'src/fluse_logger.dart';
 export 'src/frontend_server_protocol.dart';
 export 'src/hot_reload_orchestrator.dart';
 export 'src/process_manager.dart';
 export 'src/redact.dart';
 export 'src/reload_contracts.dart';
+export 'src/session_contracts.dart';
+export 'src/session_manager.dart';
 export 'src/tunnel_channel.dart';
 export 'src/tunnel_endpoint.dart';
 export 'src/vm_service_client.dart';
