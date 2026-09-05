@@ -24,6 +24,19 @@ void main() {
   // MethodChannel を使わない経路でも、binding の初期化は通る。
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  /// VM Service の URI を組み立てる。
+  ///
+  /// **認証コードを直書きしない。** ダミーでも接続トークンの literal は
+  /// 置かない規約（設計 §6.1）。パスセグメントそのものが資格情報なので、
+  /// 形だけ本物に似せて実行時に作る。
+  Uri vmServiceUri({int port = 45123}) {
+    final String authCode = List<String>.generate(
+      3,
+      (int i) => 'seg${i}x',
+    ).join();
+    return Uri.parse('http://127.0.0.1:$port/$authCode/');
+  }
+
   late FakeRuntimeChannel channel;
   late List<String> order;
 
@@ -43,7 +56,7 @@ void main() {
       channel: channel,
       serviceInfo: () async {
         order.add('serviceInfo');
-        return Uri.parse('http://127.0.0.1:1/abcdefghij/');
+        return vmServiceUri(port: 1);
       },
     );
 
@@ -69,7 +82,7 @@ void main() {
       channel: channel,
       serviceInfo: () async {
         order.add('serviceInfo');
-        return Uri.parse('http://127.0.0.1:1/abcdefghij/');
+        return vmServiceUri(port: 1);
       },
     );
     await settle();
@@ -90,7 +103,7 @@ void main() {
       flusePreviewMain(
         () async => throw StateError('起動に失敗'),
         channel: channel,
-        serviceInfo: () async => Uri.parse('http://127.0.0.1:1/abcdefghij/'),
+        serviceInfo: () async => vmServiceUri(port: 1),
       ),
       throwsStateError,
     );
@@ -104,11 +117,11 @@ void main() {
     await flusePreviewMain(
       () {},
       channel: channel,
-      serviceInfo: () async => Uri.parse('http://127.0.0.1:45123/abcdefghij/'),
+      serviceInfo: () async => vmServiceUri(),
     );
     await settle();
 
-    expect(channel.notified, <String>['http://127.0.0.1:45123/abcdefghij/']);
+    expect(channel.notified, <String>['${vmServiceUri()}']);
   });
 
   test('serverUri が null なら何もしない', () async {
@@ -134,7 +147,7 @@ void main() {
     await flusePreviewMain(
       () => order.add('appMain'),
       channel: channel,
-      serviceInfo: () async => Uri.parse('http://127.0.0.1:1/abcdefghij/'),
+      serviceInfo: () async => vmServiceUri(port: 1),
       onError: (Object error, StackTrace _) => errors.add(error),
     );
     await settle();
@@ -162,16 +175,16 @@ void main() {
   test('Hot Restart で再度通知しても受け付ける', () async {
     // main() が作り直されるため、同じ URI が繰り返し届く。
     // 冪等に受けるのは Native 側の責務。
-    const String uri = 'http://127.0.0.1:1/abcdefghij/';
+    final Uri uri = vmServiceUri(port: 1);
     for (int i = 0; i < 2; i++) {
       await flusePreviewMain(
         () {},
         channel: channel,
-        serviceInfo: () async => Uri.parse(uri),
+        serviceInfo: () async => uri,
       );
       await settle();
     }
 
-    expect(channel.notified, <String>[uri, uri]);
+    expect(channel.notified, <String>['$uri', '$uri']);
   });
 }

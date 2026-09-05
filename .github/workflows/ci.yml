@@ -35,6 +35,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 既定ではトークンがローカルの Git 設定に残る。この後で
+          # リポジトリ内のコード（Flutter / Gradle）を走らせるため、
+          # そこから読めてしまう。
+          persist-credentials: false
       # ルートの `dart pub get` はワークスペース全体を解決する。
       # fluse_runtime が Flutter プラグインなので Flutter が要る。
       - uses: subosito/flutter-action@v2
@@ -58,6 +63,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 既定ではトークンがローカルの Git 設定に残る。この後で
+          # リポジトリ内のコード（Flutter / Gradle）を走らせるため、
+          # そこから読めてしまう。
+          persist-credentials: false
 
       # fluse_runtime が Flutter プラグインになったため、素の Dart SDK では
       # `flutter: sdk: flutter` を解決できない。ワークスペース全体の解決に
@@ -87,6 +97,11 @@ jobs:
         working-directory: packages/fluse_protocol_kt
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 既定ではトークンがローカルの Git 設定に残る。この後で
+          # リポジトリ内のコード（Flutter / Gradle）を走らせるため、
+          # そこから読めてしまう。
+          persist-credentials: false
 
       - uses: actions/setup-java@v4
         with:
@@ -110,6 +125,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 既定ではトークンがローカルの Git 設定に残る。この後で
+          # リポジトリ内のコード（Flutter / Gradle）を走らせるため、
+          # そこから読めてしまう。
+          persist-credentials: false
 
       - uses: subosito/flutter-action@v2
         with:
@@ -120,7 +140,13 @@ jobs:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
 
+      # **gradlew は使えない。** Flutter のテンプレートが
+      # examples/counter_app/android/.gitignore で wrapper を除外して
+      # いるため、リポジトリには入っていない。版は
+      # gradle/wrapper/gradle-wrapper.properties と揃えること。
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14"
 
       # プラグインの解決には example 側の pub get が要る。
       - name: 依存解決
@@ -129,7 +155,7 @@ jobs:
 
       - name: Kotlin の単体テスト
         working-directory: examples/counter_app/android
-        run: ./gradlew :fluse_runtime:testDebugUnitTest --no-daemon
+        run: gradle :fluse_runtime:testDebugUnitTest --no-daemon
 
   # 言語をまたぐ L1統合テスト（Task 2.5）。Dart と JDK の両方が要るため、
   # dart / kotlin ジョブとは別に1ランナーへ揃える。
@@ -141,6 +167,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 既定ではトークンがローカルの Git 設定に残る。この後で
+          # リポジトリ内のコード（Flutter / Gradle）を走らせるため、
+          # そこから読めてしまう。
+          persist-credentials: false
 
       # L1 テストは fluse_server（純 Dart）だが、ワークスペースの解決に
       # Flutter が要る（fluse_runtime がプラグインのため）。

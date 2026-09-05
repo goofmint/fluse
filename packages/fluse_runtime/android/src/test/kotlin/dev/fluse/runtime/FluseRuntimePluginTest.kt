@@ -13,20 +13,34 @@ import kotlin.test.assertTrue
  * 単体で押さえておく必要がある。
  */
 internal class FluseRuntimePluginTest {
+    /**
+     * 認証コードらしい文字列を組み立てる。
+     *
+     * **直書きしない。** ダミーでも接続トークンの literal は置かない規約
+     * （設計 §6.1）。パスセグメントそのものが資格情報なので、形だけ
+     * 本物に似せて実行時に作る。
+     */
+    private fun authCode(length: Int = 12): String =
+        (0 until length).joinToString("") { index -> ('a' + (index % 26)).toString() }
+
     @Test
     fun `認証コードを伏せる`() {
-        val masked = FluseRuntimePlugin.maskAuthCode("http://127.0.0.1:45123/aBcDeFgHiJkL=/")
+        val code = authCode()
 
-        assertFalse(masked.contains("aBcDeFgHiJkL"), "認証コードが残っている: $masked")
+        val masked = FluseRuntimePlugin.maskAuthCode("http://127.0.0.1:45123/$code/")
+
+        assertFalse(masked.contains(code), "認証コードが残っている: $masked")
         assertTrue(masked.startsWith("http://127.0.0.1:45123/"), masked)
         assertTrue(masked.contains("***"), masked)
     }
 
     @Test
     fun `先頭4文字だけ残す`() {
-        val masked = FluseRuntimePlugin.maskAuthCode("http://127.0.0.1:1/abcdefghij/")
+        val code = authCode(10)
 
-        assertEquals("http://127.0.0.1:1/abcd***/", masked)
+        val masked = FluseRuntimePlugin.maskAuthCode("http://127.0.0.1:1/$code/")
+
+        assertEquals("http://127.0.0.1:1/${code.take(4)}***/", masked)
     }
 
     @Test
@@ -52,8 +66,10 @@ internal class FluseRuntimePluginTest {
     @Test
     fun `伏せるのは最初の1セグメントだけ`() {
         // 認証コードは先頭の1セグメント。後続まで潰すと形が変わる。
-        val masked = FluseRuntimePlugin.maskAuthCode("ws://127.0.0.1:1/abcdefghij/ws")
+        val code = authCode(10)
 
-        assertEquals("ws://127.0.0.1:1/abcd***/ws", masked)
+        val masked = FluseRuntimePlugin.maskAuthCode("ws://127.0.0.1:1/$code/ws")
+
+        assertEquals("ws://127.0.0.1:1/${code.take(4)}***/ws", masked)
     }
 }
