@@ -74,6 +74,10 @@ android {
 }
 
 dependencies {
+    // deviceToken を平文で置かないための EncryptedSharedPreferences
+    // （設計 §6.1）。端末を取られたときに残るのは暗号文になる。
+    implementation("androidx.security:security-crypto:1.1.0")
+
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.0.0")
 }
