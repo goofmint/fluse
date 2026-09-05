@@ -151,6 +151,20 @@ void main() {
       expect(rejectedCode(result), RejectCode.authFailed);
     });
 
+    test('pairingToken と deviceToken を同時に送れば AUTH_FAILED', () {
+      // どちらを見るかで結果が変わると、失敗の説明ができなくなる。
+      final SessionManager manager = build();
+      final PairingToken pairing = manager.issuePairingToken();
+      final DeviceToken device = manager.issueDeviceToken('device-1');
+
+      final AuthResult result = manager.authenticate(
+        hello(pairingToken: pairing.value, deviceToken: device.value),
+      );
+
+      expect(rejectedCode(result), RejectCode.authFailed);
+      expect(pairing.isConsumed, isFalse);
+    });
+
     test('トークンが無ければ AUTH_FAILED', () {
       final SessionManager manager = build();
       manager.issuePairingToken();
@@ -429,8 +443,10 @@ void main() {
         manager.authenticate(hello(pairingToken: token.value)),
       );
 
+      // 空だとループが1回も回らず、検証していないのに通ってしまう。
+      expect(sink.lines, isNotEmpty);
       for (final String line in sink.lines) {
-        expect(line, isNot(contains(accept.issuedDeviceToken)));
+        expect(line, isNot(contains(accept.issuedDeviceToken!)));
         expect(line, isNot(contains(token.value)));
       }
     });

@@ -156,11 +156,28 @@ final class DeviceStore implements DeviceStoreContract {
   };
 
   /// [file] へ書き出す。親ディレクトリが無ければ作る。
+  ///
+  /// **同じディレクトリの一時ファイルに書いてから差し替える。**
+  /// `writeAsStringSync` は既存ファイルを切り詰めてから書くため、途中で
+  /// 落ちると `devices.json` が半端な JSON のまま残る。そうなると
+  /// [readFrom] が失敗し、**ペアリング済みの端末が全部繋がらなくなる**。
+  /// 同一ディレクトリなら `renameSync` は差し替えとして働く。
   void writeTo(File file) {
     file.parent.createSync(recursive: true);
-    file.writeAsStringSync(
-      const JsonEncoder.withIndent('  ').convert(toJson()),
-    );
+
+    final File staging = File('${file.path}.tmp');
+    try {
+      staging.writeAsStringSync(
+        const JsonEncoder.withIndent('  ').convert(toJson()),
+      );
+      staging.renameSync(file.path);
+    } on Object {
+      // 中途半端な一時ファイルを残さない。次の書き込みで邪魔になる。
+      if (staging.existsSync()) {
+        staging.deleteSync();
+      }
+      rethrow;
+    }
   }
 
   @override
@@ -169,18 +186,39 @@ final class DeviceStore implements DeviceStoreContract {
   /// 登録済みの端末数。
   int get length => _records.length;
 
+  /// **保存に失敗したら記憶も元に戻す。** 書けていないのに登録済みとして
+  /// 振る舞うと、再起動で消えるトークンを端末に渡してしまう。
   @override
   void upsert(DeviceRecord record) {
+    final DeviceRecord? previous = _records[record.deviceId];
     _records[record.deviceId] = record;
-    writeTo(_file);
+    try {
+      writeTo(_file);
+    } on Object {
+      if (previous == null) {
+        _records.remove(record.deviceId);
+      } else {
+        _records[record.deviceId] = previous;
+      }
+      rethrow;
+    }
   }
 
   /// 消す対象が無ければ何もしない。
+  ///
+  /// **保存に失敗したら記憶も元に戻す。** 消えたつもりで居ると、
+  /// 再起動でファイル上の登録が復活し、取り消したはずの端末が繋がる。
   @override
   void remove(String deviceId) {
-    if (_records.remove(deviceId) == null) {
+    final DeviceRecord? previous = _records.remove(deviceId);
+    if (previous == null) {
       return;
     }
-    writeTo(_file);
+    try {
+      writeTo(_file);
+    } on Object {
+      _records[deviceId] = previous;
+      rethrow;
+    }
   }
 }

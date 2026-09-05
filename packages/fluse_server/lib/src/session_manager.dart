@@ -229,6 +229,17 @@ final class SessionManager {
 
     // --- token ---
 
+    // **両方載っているのは受け付けない。** どちらを見るかで結果が変わり、
+    // 片方だけ失敗したときの挙動が説明できなくなる。正しい端末は初回に
+    // pairingToken、以後は deviceToken の**どちらか一方**を送る。
+    if (hello.pairingToken != null && hello.deviceToken != null) {
+      return _reject(
+        RejectCode.authFailed,
+        'pairingToken と deviceToken は同時に送れません',
+        hello,
+      );
+    }
+
     final String? pairing = hello.pairingToken;
     if (pairing != null) {
       final PairingToken? issued = _pairingToken;

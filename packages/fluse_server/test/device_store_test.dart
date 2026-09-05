@@ -74,6 +74,67 @@ void main() {
     expect(store.length, 1);
   });
 
+  group('保存に失敗したとき', () {
+    /// 書き込み先をディレクトリで塞ぐ。
+    ///
+    /// `writeTo` は同じディレクトリの `<path>.tmp` に書いてから rename する。
+    /// rename 先が既存ディレクトリだと FileSystemException になる。
+    void blockDestination() {
+      Directory(file.path).createSync(recursive: true);
+    }
+
+    test('upsert が失敗したら登録も元に戻る', () {
+      final DeviceStore store = DeviceStore.readFrom(file);
+      blockDestination();
+
+      expect(
+        () => store.upsert(record('device-1', 'token-1')),
+        throwsA(isA<FileSystemException>()),
+      );
+      // 書けていないのに登録済みとして振る舞うと、再起動で消える
+      // トークンを端末に渡してしまう。
+      expect(store.lookup('device-1'), isNull);
+    });
+
+    test('upsert の上書きが失敗したら前の値に戻る', () {
+      final DeviceStore store = DeviceStore.readFrom(file);
+      store.upsert(record('device-1', 'token-1'));
+      file.deleteSync();
+      blockDestination();
+
+      expect(
+        () => store.upsert(record('device-1', 'token-2')),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(store.lookup('device-1')?.deviceToken, 'token-1');
+    });
+
+    test('remove が失敗したら登録が残る', () {
+      final DeviceStore store = DeviceStore.readFrom(file);
+      store.upsert(record('device-1', 'token-1'));
+      file.deleteSync();
+      blockDestination();
+
+      expect(
+        () => store.remove('device-1'),
+        throwsA(isA<FileSystemException>()),
+      );
+      // 消えたつもりで居ると、再起動で登録が復活して取り消しが効かない。
+      expect(store.lookup('device-1')?.deviceToken, 'token-1');
+    });
+
+    test('一時ファイルを残さない', () {
+      final DeviceStore store = DeviceStore.readFrom(file);
+      blockDestination();
+
+      expect(
+        () => store.upsert(record('device-1', 'token-1')),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(File('${file.path}.tmp').existsSync(), isFalse);
+    });
+  });
+
   test('toString にトークンを含めない', () {
     expect(
       record('device-1', 'token-1').toString(),
