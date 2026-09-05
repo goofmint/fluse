@@ -85,3 +85,7 @@ cd ../fluse_server && dart test test/tunnel_l1_integration_test.dart -r expanded
 
 ハーネスが未ビルドの環境ではテストは自己スキップする。CI では
 `l1-integration` ジョブが Dart と JDK 17 を1ランナーに揃えて実行する。
+
+**スループットは既定では失敗条件にしない。** 共有ランナーは CPU と I/O が
+安定せず、閾値付近に来るとコードを変えていないのに赤くなる。記録は常に行う。
+手元で回帰を見たいときは `FLUSE_L1_ASSERT_THROUGHPUT=1` を付ける。

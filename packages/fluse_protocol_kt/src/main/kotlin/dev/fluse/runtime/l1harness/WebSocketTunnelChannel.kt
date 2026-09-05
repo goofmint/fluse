@@ -52,7 +52,7 @@ class WebSocketTunnelChannel(
     /** WebSocket は前の送信が完了するまで次を出せない。順序も保つ必要がある。 */
     private val sendMutex = Mutex()
 
-    /** [connect] が埋める。接続前に [send] は呼べない。 */
+    /** [attach] が埋める。接続前に [send] は呼べない。 */
     @Volatile
     private var socket: WebSocket? = null
 

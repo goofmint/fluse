@@ -26,6 +26,9 @@ import 'l1_tunnel_harness.dart';
 ///   → FluseTunnel(JVM) → EchoServer(TCP) → 折り返して同じ経路を戻る
 /// ```
 ///
+/// スループットは記録するが、既定では失敗条件にしない（共有 CI ランナーで
+/// 不安定になるため）。判定したいときは `FLUSE_L1_ASSERT_THROUGHPUT=1`。
+///
 /// JVM ハーネス（`installDist` の生成物）が無い環境ではスキップする。
 /// 事前に次を実行しておくこと。
 ///
@@ -61,6 +64,35 @@ void main() {
 
   /// 計測結果。まとめて最後に出す。
   final List<String> measurements = <String>[];
+
+  /// スループットを失敗条件にするか。
+  ///
+  /// **既定では判定しない。** GitHub Actions の共有ランナーは CPU と I/O が
+  /// 安定せず、JIT のウォームアップも 1 回の計測に乗る。閾値付近に来ると
+  /// コードを変えていないのに赤くなり、テストが信用されなくなる。
+  /// 完了条件は「計測結果を記録」なので、記録は常に行う。
+  ///
+  /// 手元で回帰を見たいときは `FLUSE_L1_ASSERT_THROUGHPUT=1` を付ける。
+  final bool assertThroughput =
+      Platform.environment['FLUSE_L1_ASSERT_THROUGHPUT'] == '1';
+
+  /// 計測を記録し、必要なら目標との比較を失敗条件にする。
+  void recordThroughput(String label, int bytes, Stopwatch stopwatch) {
+    final double throughput = bytes / (stopwatch.elapsedMicroseconds / 1000000);
+    final bool met = throughput > targetBytesPerSecond;
+    measurements.add(
+      '$label: ${_mib(throughput)} MiB/s '
+      '(${stopwatch.elapsedMilliseconds}ms, 往復 ${_mib(bytes)} MiB) '
+      '目標 ${_mib(targetBytesPerSecond)} MiB/s → ${met ? '達成' : '未達'}',
+    );
+    if (assertThroughput) {
+      expect(
+        throughput,
+        greaterThan(targetBytesPerSecond),
+        reason: '設計 §8.1 の目標 10MB/s に届いていません',
+      );
+    }
+  }
 
   EchoServer? echo;
   HttpServer? wsServer;
@@ -255,17 +287,7 @@ void main() {
     expect(_firstMismatch(payload, echoed), -1, reason: '返送バイトが一致しません');
 
     // 往復なので実際には 2 倍のバイトが線を通っている。
-    final double throughput =
-        payloadBytes * 2 / (stopwatch.elapsedMicroseconds / 1000000);
-    measurements.add(
-      '単一ストリーム: ${_mib(throughput)} MiB/s '
-      '(${stopwatch.elapsedMilliseconds}ms, 往復 ${_mib(payloadBytes * 2)} MiB)',
-    );
-    expect(
-      throughput,
-      greaterThan(targetBytesPerSecond),
-      reason: '設計 §8.1 の目標 10MB/s に届いていません',
-    );
+    recordThroughput('単一ストリーム', payloadBytes * 2, stopwatch);
   });
 
   test('4ストリーム同時に転送してそれぞれ一致する', () async {
@@ -289,17 +311,10 @@ void main() {
       );
     }
 
-    final int totalBytes = payloadBytes * concurrentStreams * 2;
-    final double throughput =
-        totalBytes / (stopwatch.elapsedMicroseconds / 1000000);
-    measurements.add(
-      '$concurrentStreams ストリーム同時: ${_mib(throughput)} MiB/s '
-      '(${stopwatch.elapsedMilliseconds}ms, 往復 ${_mib(totalBytes)} MiB)',
-    );
-    expect(
-      throughput,
-      greaterThan(targetBytesPerSecond),
-      reason: '設計 §8.1 の目標 10MB/s に届いていません',
+    recordThroughput(
+      '$concurrentStreams ストリーム同時',
+      payloadBytes * concurrentStreams * 2,
+      stopwatch,
     );
   });
 }

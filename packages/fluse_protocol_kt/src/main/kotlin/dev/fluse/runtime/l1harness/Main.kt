@@ -67,6 +67,10 @@ fun main(args: Array<String>) {
             FluseTunnel(vmServicePort, channel, scope).also { it.start() }
         } catch (e: Throwable) {
             System.err.println("ハーネスの初期化に失敗しました: $e")
+            // 正常経路と同じく畳む。**忘れると SupervisorJob が Active のまま
+            // 残り、runBlocking が抜けられない。** プロセスが居座り、Dart 側は
+            // READY を 60 秒待ってから落ちるので原因が見えなくなる。
+            scope.cancel()
             return@runBlocking 1
         }
 
