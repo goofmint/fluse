@@ -25,6 +25,8 @@ dependencies:
   web_socket_channel: ^3.0.0
   # VM Service の RPC。DevFS の作成と reloadSources に使う。
   vm_service: ^15.0.2
+  # ソース変更の監視。プラットフォーム差（inotify / FSEvents）を吸収する。
+  watcher: ^1.1.0
 
 dev_dependencies:
   # WebSocket の受信を1つずつ取り出す StreamQueue をテストで使う。
