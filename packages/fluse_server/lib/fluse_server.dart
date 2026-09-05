@@ -6,6 +6,7 @@
 library;
 
 export 'src/auth_crypto.dart';
+export 'src/bind_address.dart';
 export 'src/build_meta.dart';
 export 'src/build_meta_parser.dart';
 export 'src/compile_output.dart';
@@ -23,3 +24,4 @@ export 'src/session_manager.dart';
 export 'src/tunnel_channel.dart';
 export 'src/tunnel_endpoint.dart';
 export 'src/vm_service_client.dart';
+export 'src/ws_server.dart';

@@ -17,10 +17,18 @@ dependencies:
   # 外部プロセス（flutter / adb / keytool / frontend_server）の抽象。
   # flutter_tools も同じパッケージを使っている。
   process: ^5.0.5
+  # 端末との WebSocket / HTTP。案内ページと APK 配信も同じサーバで捌く。
+  shelf: ^1.4.2
+  shelf_web_socket: ^3.0.0
+  # shelf_web_socket が渡してくる WebSocketChannel を直接扱うため、
+  # 推移的依存に頼らず明示する。
+  web_socket_channel: ^3.0.0
   # VM Service の RPC。DevFS の作成と reloadSources に使う。
   vm_service: ^15.0.2
 
 dev_dependencies:
+  # WebSocket の受信を1つずつ取り出す StreamQueue をテストで使う。
+  async: ^2.11.0
   # 実 frontend_server に対する統合テストで SDK を解決するためだけに使う。
   # 本番の依存グラフには入らない。
   fluse_builder: ^0.1.0
