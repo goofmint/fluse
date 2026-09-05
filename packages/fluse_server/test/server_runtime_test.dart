@@ -459,6 +459,16 @@ void main() {
     return (socket: socket, queue: queue);
   }
 
+  /// 記録されたログイベント。
+  List<Map<String, Object?>> logEvents() => <Map<String, Object?>>[
+    for (final String line in sink.lines)
+      jsonDecode(line) as Map<String, Object?>,
+  ];
+
+  /// `code` フィールドが [code] のログイベント。
+  List<Map<String, Object?>> eventsWithCode(String code) =>
+      logEvents().where((Map<String, Object?> e) => e['code'] == code).toList();
+
   /// 監視対象へ変更を流す。
   void emitChange(String relative) {
     for (final FakeWatchTarget target in targets) {
@@ -581,6 +591,29 @@ void main() {
     expect(error.diagnostics.single.line, 3);
     // Watch は止めない（設計 §5.1）。
     expect(runtime!.hasSession, isTrue);
+
+    // **CLI にも同じ内容が出る**（設計 §5.2）。端末を見ていないときに
+    // 気付けないと、直したつもりで古い画面を見続ける。
+    final List<Map<String, Object?>> logged = eventsWithCode(
+      FluseErrorCode.compileError.wireValue,
+    );
+    expect(logged, hasLength(1));
+    expect(logged.single['level'], 'error');
+
+    final Object? diagnostics = logged.single['diagnostics'];
+    if (diagnostics is! List<Object?> || diagnostics.length != 1) {
+      fail('診断が1件のリストではありません: $diagnostics');
+    }
+    final Object? entry = diagnostics.single;
+    if (entry is! Map<String, Object?>) {
+      fail('診断が JSON オブジェクトではありません: $entry');
+    }
+    // エディタから開ける位置と本文を出す。raw は載せない
+    // （CFE がソースの抜粋を続きに付けることがある）。
+    expect(entry['severity'], 'error');
+    expect(entry['location'], 'lib/main.dart:3:5');
+    expect(entry['message'], '足りません');
+    expect(entry.containsKey('raw'), isFalse);
   });
 
   test('reloadSources の失敗は reloadRejected として届く', () async {
@@ -601,9 +634,58 @@ void main() {
       (message as ErrorMessage).code,
       FluseErrorCode.reloadRejected.wireValue,
     );
+    // notices は端末にも CLI にも届ける。
+    expect((message).detail, contains('壊れています'));
+    final List<Map<String, Object?>> logged = eventsWithCode(
+      FluseErrorCode.reloadRejected.wireValue,
+    );
+    expect(logged, hasLength(1));
+    expect(logged.single['level'], 'warn');
+    // 整形は表示のためのもの。機械処理する側には元の粒度が要る。
+    expect(logged.single['notices'], <String>['壊れています']);
+
     // 失敗時に accept すると以降の全リロードが壊れる（設計 §10-2）。
     expect(log.countOf('compiler.accept'), 1, reason: '初回同期の1回だけ');
     expect(log.countOf('compiler.reject'), 1);
+  });
+
+  test('リロード成功は compileOk と CLI ログの両方に出る', () async {
+    final Uri base = await startRuntime();
+    final ({WebSocket socket, StreamQueue<dynamic> queue}) client =
+        await connectAndReady(base);
+    addTearDown(() async {
+      await client.queue.cancel(immediate: true);
+      await client.socket.close();
+    });
+
+    await emitAndAwaitReload(p.join('lib', 'main.dart'));
+
+    // compileOk は端末側のオーバーレイ解除の合図でもある。
+    expect(await nextMessage(client.queue), isA<CompileOkMessage>());
+    final List<Map<String, Object?>> logged = eventsWithCode('RELOAD_OK');
+    expect(logged, hasLength(1));
+    expect(logged.single['level'], 'info');
+  });
+
+  test('APP_OUTDATED も CLI ログに残る', () async {
+    final Uri base = await startRuntime();
+    final ({WebSocket socket, StreamQueue<dynamic> queue}) client =
+        await connectAndReady(base);
+    addTearDown(() async {
+      await client.queue.cancel(immediate: true);
+      await client.socket.close();
+    });
+
+    emitChange('pubspec.yaml');
+    await nextMessage(client.queue);
+
+    // 本文の部分一致では別のイベントでも通ってしまう。分類で見る。
+    final List<Map<String, Object?>> logged = eventsWithCode(
+      FluseErrorCode.appOutdated.wireValue,
+    );
+    expect(logged, hasLength(1));
+    expect(logged.single['level'], 'warn');
+    expect(logged.single['files'], <String>[p.join(root, 'pubspec.yaml')]);
   });
 
   test('指紋対象の変更は APP_OUTDATED として届く', () async {
