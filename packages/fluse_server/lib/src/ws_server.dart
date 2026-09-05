@@ -35,11 +35,13 @@ final class WsServer {
     Future<List<InternetAddress>> Function()? addresses,
     void Function(FluseConnection connection)? onAuthenticated,
     void Function(FluseConnection connection, FluseMessage message)? onMessage,
+    void Function(FluseConnection connection)? onDisconnected,
   }) : _sessions = sessionManager,
        _logger = logger,
        _addresses = addresses,
        _onAuthenticated = onAuthenticated,
-       _onMessage = onMessage;
+       _onMessage = onMessage,
+       _onDisconnected = onDisconnected;
 
   /// 既定のポート（設計 §1.1）。
   static const int defaultPort = 8180;
@@ -73,6 +75,7 @@ final class WsServer {
   final void Function(FluseConnection connection)? _onAuthenticated;
   final void Function(FluseConnection connection, FluseMessage message)?
   _onMessage;
+  final void Function(FluseConnection connection)? _onDisconnected;
 
   HttpServer? _server;
   final Set<FluseConnection> _connections = <FluseConnection>{};
@@ -288,6 +291,7 @@ final class WsServer {
           missedPongLimit: missedPongLimit,
           onAuthenticated: _onAuthenticated,
           onMessage: _onMessage,
+          onDisconnected: _onDisconnected,
         );
         _connections.add(connection);
         unawaited(
@@ -310,12 +314,14 @@ final class FluseConnection implements TunnelChannel {
     FluseLogger? logger,
     void Function(FluseConnection connection)? onAuthenticated,
     void Function(FluseConnection connection, FluseMessage message)? onMessage,
+    void Function(FluseConnection connection)? onDisconnected,
   }) : _channel = channel,
        _sessions = sessions,
        _missedPongLimit = missedPongLimit,
        _logger = logger,
        _onAuthenticated = onAuthenticated,
-       _onMessage = onMessage {
+       _onMessage = onMessage,
+       _onDisconnected = onDisconnected {
     _subscription = _channel.stream.listen(
       _handleFrame,
       onError: (Object error) {
@@ -333,6 +339,7 @@ final class FluseConnection implements TunnelChannel {
   final void Function(FluseConnection connection)? _onAuthenticated;
   final void Function(FluseConnection connection, FluseMessage message)?
   _onMessage;
+  final void Function(FluseConnection connection)? _onDisconnected;
 
   late final StreamSubscription<dynamic> _subscription;
 
@@ -532,6 +539,15 @@ final class FluseConnection implements TunnelChannel {
       _sessions.endSession();
     }
     _sessionId = null;
+
+    // 接続に紐づく資源（DevFS / トンネル / VM Service）の解放を促す。
+    // `_closed` を先に立てているので、ここは1回しか通らない。
+    try {
+      _onDisconnected?.call(this);
+    } on Object catch (error) {
+      // 通知先の失敗で自分の後始末を止めない。
+      _logger?.warn('切断の通知に失敗しました: $error');
+    }
 
     // **1つ失敗しても残りは閉じる。** 途中で抜けると購読やストリームが
     // 生き残り、done も完了しないので WsServer の集合に接続が残り続ける。

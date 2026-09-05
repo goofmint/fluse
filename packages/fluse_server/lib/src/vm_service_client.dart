@@ -4,7 +4,7 @@ import 'package:vm_service/vm_service.dart' as vm;
 import 'package:vm_service/vm_service_io.dart' as vm_io;
 
 import 'fluse_logger.dart';
-import 'reload_contracts.dart';
+import 'server_contracts.dart';
 
 /// VM Service とのやり取りに失敗したときに投げる。
 final class VmServiceException implements Exception {
@@ -44,7 +44,7 @@ final class ReloadResult {
 ///
 /// DevFS の作成・削除もここを通す。`vm_service` パッケージに触れる場所を
 /// 1つに絞ることで、バージョン追従の影響範囲を閉じ込める。
-final class VmServiceClient implements VmServiceContract {
+final class VmServiceClient implements SessionVmServiceContract {
   VmServiceClient(
     this._service, {
     required this.httpAddress,
@@ -55,6 +55,7 @@ final class VmServiceClient implements VmServiceContract {
   ///
   /// DevFS への PUT はここへ送る。**パスセグメントの認証コードが
   /// そのまま資格情報**なので、ログに出す際は必ずマスクする。
+  @override
   final Uri httpAddress;
 
   final vm.VmService _service;
@@ -153,6 +154,7 @@ final class VmServiceClient implements VmServiceContract {
   }
 
   /// DevFS を作る。返るのは DevFS のベース URI。
+  @override
   Future<Uri> createDevFS(String fsName) async {
     final vm.Response response;
     try {
@@ -180,6 +182,7 @@ final class VmServiceClient implements VmServiceContract {
   }
 
   /// DevFS を消す。
+  @override
   Future<void> deleteDevFS(String fsName) async {
     try {
       await _service.callServiceExtension(
@@ -256,6 +259,7 @@ final class VmServiceClient implements VmServiceContract {
   ///
   /// 返るのは `viewId` と、その View が使う UI isolate の id の組。
   /// [setAssetDirectory] に渡すために必要。
+  @override
   Future<List<({String viewId, String? isolateId})>> listViews() async {
     final vm.Response response;
     try {
@@ -299,6 +303,7 @@ final class VmServiceClient implements VmServiceContract {
   /// 既定で APK 内の `flutter_assets` しか見ないため、DevFS へ置いても
   /// 参照されない。flutter_tools も最初の asset 更新時に1度だけ呼ぶ
   /// （`run_hot.dart:1190-1210`）。
+  @override
   Future<void> setAssetDirectory({
     required String viewId,
     required String? isolateId,
@@ -343,6 +348,7 @@ final class VmServiceClient implements VmServiceContract {
   }
 
   /// 接続を閉じる。
+  @override
   Future<void> dispose() async {
     await _service.dispose();
   }

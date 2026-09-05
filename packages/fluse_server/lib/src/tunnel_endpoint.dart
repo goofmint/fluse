@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:fluse_protocol/fluse_protocol.dart';
 
 import 'fluse_logger.dart';
+import 'server_contracts.dart';
 import 'tunnel_channel.dart';
 
 /// トンネルの中継に失敗したときに投げる。
@@ -33,7 +34,7 @@ typedef ServerSocketFactory = Future<ServerSocket> Function();
 /// **プロトコルは一切解釈しない**（設計 §10-3）。VM Service は JSON-RPC
 /// over WebSocket と DevFS の HTTP PUT を同じポートで受けるため、片方だけ
 /// 対応した「賢いプロキシ」は必ず破綻する。ここはバイト列を運ぶだけ。
-final class TunnelEndpoint {
+final class TunnelEndpoint implements TunnelContract {
   TunnelEndpoint({
     required TunnelChannel channel,
     FluseLogger? logger,
@@ -114,6 +115,7 @@ final class TunnelEndpoint {
   /// 元はこれを監視すること。** 監視しないと、中継が止まっているのに
   /// TCP 待ち受けだけ生きている状態に気づけない。
   /// [bind] 前は完了済みの [Future] を返す。
+  @override
   Future<void> get done => _terminated?.future ?? Future<void>.value();
 
   /// localhost に待ち受けを立て、VM Service として振る舞う URI を返す。
@@ -122,6 +124,7 @@ final class TunnelEndpoint {
   /// `http://127.0.0.1:<devicePort>/<authCode>/`。返す URI は
   /// **同じ authCode を保ったまま**ローカルのポートを指す。認証コードは
   /// VM Service のパスそのものなので、書き換えると通らなくなる。
+  @override
   Future<Uri> bind(String remoteVmServiceUri) async {
     if (_closed) {
       // close 後に bind できてしまうと、_closed が true のままなので
@@ -184,6 +187,7 @@ final class TunnelEndpoint {
   }
 
   /// 待ち受けと全ストリームを閉じる。二重に呼んでも安全。
+  @override
   Future<void> close() async {
     if (_closed) {
       return;
