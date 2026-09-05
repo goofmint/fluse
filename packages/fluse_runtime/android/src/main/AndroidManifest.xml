@@ -1,0 +1,19 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!--
+          プロセス起動時に自分から動き出すための入口（設計 §2.2.5）。
+
+          ContentProvider を使うのは、**利用者のマニフェストに手を入れずに
+          済ませる**ため。Application クラスの差し替えを求めると、既に独自の
+          Application を持つアプリで衝突する。
+
+          authority は端末内で一意でなければならない。同じ端末に複数の
+          Preview App が入りうるので、利用側の applicationId を前に付ける。
+        -->
+        <provider
+            android:name="dev.fluse.runtime.FluseInitProvider"
+            android:authorities="${applicationId}.fluseinitprovider"
+            android:exported="false"
+            android:initOrder="100" />
+    </application>
+</manifest>
