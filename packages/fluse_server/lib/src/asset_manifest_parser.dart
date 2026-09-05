@@ -26,6 +26,7 @@ final class FontAsset {
   /// 宣言されたスタイル（`normal` / `italic`）。
   final String? style;
 
+  /// `FontManifest.json` に載る形。宣言されなかった値は載せない。
   Map<String, Object?> toJson() => <String, Object?>{
     'asset': asset,
     if (weight != null) 'weight': weight,
@@ -40,9 +41,13 @@ final class FontAsset {
 final class FontFamily {
   const FontFamily({required this.family, required this.fonts});
 
+  /// `TextStyle(fontFamily: ...)` で指定する名前。
   final String family;
+
+  /// このファミリに属する書体。太さやスタイルごとに1件。
   final List<FontAsset> fonts;
 
+  /// `FontManifest.json` に載る形。
   Map<String, Object?> toJson() => <String, Object?>{
     'family': family,
     'fonts': <Object?>[for (final FontAsset font in fonts) font.toJson()],
@@ -65,8 +70,10 @@ final class AssetDeclarations {
   /// `assets:` に並んだ値。末尾が `/` ならディレクトリ宣言。
   final List<String> assets;
 
+  /// `fonts:` に並んだファミリ。
   final List<FontFamily> fonts;
 
+  /// 届けるものが1つも無いか。
   bool get isEmpty => assets.isEmpty && fonts.isEmpty;
 
   @override

@@ -312,6 +312,66 @@ $flutterSection
       // evict にはアーカイブ上のパスを渡す（設計 §2.2.3(d)）。
       expect(asset.archivePath, 'assets/logo.png');
     });
+
+    test('URI で意味を持つ文字を符号化する', () {
+      // Uri.parse だと # が fragment、? が query になり、端末側が
+      // ファイルを見つけられない。
+      writePubspec('  assets:\n    - "assets/a#1 b.png"\n');
+      writeFile('assets/a#1 b.png', 'v1');
+
+      final ChangedAsset asset = build().sync().changed.firstWhere(
+        (ChangedAsset a) => a.archivePath == 'assets/a#1 b.png',
+      );
+
+      expect(asset.deviceUri.pathSegments, <String>[
+        'build',
+        'flutter_assets',
+        'assets',
+        'a#1 b.png',
+      ]);
+      expect('${asset.deviceUri}', isNot(contains('#1')));
+    });
+  });
+
+  group('プロジェクト外への脱出', () {
+    test('.. を含む宣言は無視する', () {
+      // 鍵ファイルのような無関係なファイルが DevFS 経由で端末へ渡る。
+      writeFile('../outside.txt', 'secret');
+      writePubspec('  assets:\n    - ../outside.txt\n');
+
+      final AssetSyncResult result = build().sync();
+
+      expect(changedAssets(result), isEmpty);
+      expect(
+        sink.lines.where((String l) => l.contains('プロジェクトの外')),
+        isNotEmpty,
+      );
+    });
+
+    test('絶対パスの宣言は無視する', () {
+      final File outside = File(p.join(temp.parent.path, 'fluse_outside.txt'))
+        ..writeAsStringSync('secret');
+      addTearDown(() {
+        if (outside.existsSync()) {
+          outside.deleteSync();
+        }
+      });
+      writePubspec('  assets:\n    - ${outside.path}\n');
+
+      expect(changedAssets(build().sync()), isEmpty);
+    });
+
+    test('フォント宣言でも脱出できない', () {
+      writeFile('../outside.ttf', 'font');
+      writePubspec("""
+  fonts:
+    - family: X
+      fonts:
+        - asset: ../outside.ttf
+""");
+
+      expect(changedAssets(build().sync()), isEmpty);
+    });
   });
 
   group('キャッシュ', () {

@@ -23,6 +23,7 @@ final class AssetCacheEntry {
   /// `assets/images/logo.png` の形。DevFS 上のパスの元になる。
   final String archivePath;
 
+  /// ファイルの大きさ。mtime と併せた一次判定に使う。
   final int sizeBytes;
 
   /// 最終更新時刻（エポックミリ秒）。
@@ -35,12 +36,14 @@ final class AssetCacheEntry {
   /// 内容の sha256（16進）。差分判定の最終的な根拠。
   final String sha256;
 
+  /// `assets.json` に載る形。archivePath はキー側に持つので含めない。
   Map<String, Object?> toJson() => <String, Object?>{
     'sizeBytes': sizeBytes,
     'mtimeMillis': mtimeMillis,
     'sha256': sha256,
   };
 
+  /// `assets.json` の1件を読む。欠けや型違いは [AssetCacheException]。
   static AssetCacheEntry fromJson(String archivePath, Object? json) {
     if (json is! Map<String, Object?>) {
       throw AssetCacheException('$archivePath の記録が JSON オブジェクトではありません');
@@ -91,8 +94,10 @@ final class AssetCache {
   /// 記録されている archivePath。
   Iterable<String> get archivePaths => _entries.keys;
 
+  /// 記録されている件数。
   int get length => _entries.length;
 
+  /// [archivePath] の記録。無ければ null。
   AssetCacheEntry? operator [](String archivePath) => _entries[archivePath];
 
   /// [file] から読む。**存在しなければ空として扱う。**
@@ -139,6 +144,7 @@ final class AssetCache {
     });
   }
 
+  /// `assets.json` に書く形。
   Map<String, Object?> toJson() => <String, Object?>{
     'schemaVersion': currentSchemaVersion,
     'assets': <String, Object?>{

@@ -188,8 +188,20 @@ final class AssetBundleService {
     // 論理 asset -> バリアントの archivePath。AssetManifest.json の元。
     final Map<String, Set<String>> variants = <String, Set<String>>{};
 
+    /// 全ての宣言経路（単一ファイル・ディレクトリ・フォント・バリアント）が
+    /// ここを通る。**プロジェクト外への脱出はここで止める。**
     void addFile(File file, {String? logicalKey}) {
-      final String archivePath = _archivePath(file.path);
+      final String? archivePath = _archivePathWithin(file.path);
+      if (archivePath == null) {
+        // `assets: - ../../id_rsa` のような宣言でプロジェクト外の
+        // ファイルが DevFS に載るのを防ぐ。1つの誤りで起動できなく
+        // ならないよう、記録して飛ばす。
+        _logger?.warn(
+          'プロジェクトの外を指す宣言を無視しました',
+          fields: <String, Object?>{'path': file.path},
+        );
+        return;
+      }
       resolved[archivePath] = _ResolvedAsset(
         archivePath: archivePath,
         file: file,
@@ -216,7 +228,14 @@ final class AssetBundleService {
         continue;
       }
 
-      final String logicalKey = _archivePath(file.path);
+      final String? logicalKey = _archivePathWithin(file.path);
+      if (logicalKey == null) {
+        _logger?.warn(
+          'プロジェクトの外を指す宣言を無視しました',
+          fields: <String, Object?>{'asset': declaration},
+        );
+        continue;
+      }
       addFile(file, logicalKey: logicalKey);
       for (final File variant in _variantsOf(file)) {
         addFile(variant, logicalKey: logicalKey);
@@ -272,7 +291,10 @@ final class AssetBundleService {
       if (entity is! File) {
         continue;
       }
-      final String logicalKey = _archivePath(entity.path);
+      final String? logicalKey = _archivePathWithin(entity.path);
+      if (logicalKey == null) {
+        continue;
+      }
       addFile(entity, logicalKey: logicalKey);
       for (final File variant in _variantsOf(entity)) {
         addFile(variant, logicalKey: logicalKey);
@@ -330,13 +352,32 @@ final class AssetBundleService {
 
   // --------------------------------------------------------------- パス計算
 
-  /// プロジェクトルートからの POSIX 相対パス。
-  String _archivePath(String path) =>
-      p.relative(p.normalize(path), from: projectRoot).replaceAll(r'\', '/');
+  /// プロジェクトルートからの POSIX 相対パス。外に出るなら null。
+  ///
+  /// **プロジェクト外を弾くのがここの主目的。** 宣言は利用者が書く
+  /// 文字列であり、`../` を含みうる。素通しすると、鍵ファイルのような
+  /// 無関係なファイルが DevFS 経由で端末へ渡る。
+  String? _archivePathWithin(String path) {
+    final String absolute = p.normalize(
+      p.isAbsolute(path) ? path : p.join(projectRoot, path),
+    );
+    if (!p.isWithin(projectRoot, absolute)) {
+      return null;
+    }
+    return p.relative(absolute, from: projectRoot).replaceAll(r'\', '/');
+  }
 
   /// DevFS 上の書き込み先。
-  Uri _deviceUri(String archivePath) =>
-      Uri.parse('$devFsAssetRoot/$archivePath');
+  ///
+  /// **`Uri.parse` は使えない。** `assets/a#1.png` の `#` が fragment に、
+  /// `?` が query になり、端末側がファイルを見つけられなくなる。
+  /// セグメントとして組み立てれば必要な分だけ符号化される。
+  Uri _deviceUri(String archivePath) => Uri(
+    pathSegments: <String>[
+      ...p.posix.split(devFsAssetRoot),
+      ...p.posix.split(archivePath),
+    ],
+  );
 }
 
 /// 解決済みの asset 1件。
