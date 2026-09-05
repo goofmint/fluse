@@ -4,8 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'fluse_logger.dart';
-import 'reload_contracts.dart';
-import 'vm_service_client.dart';
+import 'server_contracts.dart';
 
 /// DevFS への転送に失敗したときに投げる。
 final class DevFSException implements Exception {
@@ -43,9 +42,9 @@ final class DevFSContent {
 /// **同時実行3固定・60秒タイムアウト・最大10回リトライは仕様であって
 /// 調整可能なチューニングではない。** `request.close()` が応答を返さない
 /// dart-lang/sdk#43525 を回避するための構成なので、緩めてはいけない。
-final class DevFSClient implements DevFSWriterContract {
+final class DevFSClient implements DevFSContract {
   DevFSClient({
-    required VmServiceClient vmService,
+    required SessionVmServiceContract vmService,
     FluseLogger? logger,
     this.maxInFlight = defaultMaxInFlight,
     this.uploadTimeout = defaultUploadTimeout,
@@ -86,7 +85,7 @@ final class DevFSClient implements DevFSWriterContract {
   final int maxRetries;
   final Duration retryDelay;
 
-  final VmServiceClient _vmService;
+  final SessionVmServiceContract _vmService;
   final FluseLogger? _logger;
   final HttpClient _httpClient;
 
@@ -97,14 +96,17 @@ final class DevFSClient implements DevFSWriterContract {
   Future<void> _lifecycle = Future<void>.value();
 
   /// 作成済み DevFS の名前。未作成なら null。
+  @override
   String? get fsName => _fsName;
 
   /// 作成済み DevFS のベース URI。未作成なら null。
+  @override
   Uri? get baseUri => _baseUri;
 
   /// DevFS を作る。
   ///
   /// 同時に呼ばれても、2つ目は1つ目の完了後に「既に作成済み」で失敗する。
+  @override
   Future<Uri> create(String fsName) => _serialize(() async {
     if (_fsName != null) {
       throw DevFSException('DevFS "$_fsName" が既に作成されています');
@@ -120,6 +122,7 @@ final class DevFSClient implements DevFSWriterContract {
   ///
   /// **削除が成功してから状態を消す。** 先に消すと、RPC が失敗したときに
   /// 再試行できず、端末側に DevFS が残り続ける。
+  @override
   Future<void> destroy() => _serialize(() async {
     final String? name = _fsName;
     if (name == null) {
@@ -144,6 +147,7 @@ final class DevFSClient implements DevFSWriterContract {
   }
 
   /// 保持している接続を閉じる。
+  @override
   void close() => _httpClient.close(force: true);
 
   /// PUT に付けるヘッダを組み立てる。

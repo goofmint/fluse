@@ -30,7 +30,7 @@ final class CompilerException implements Exception {
 /// **`accept` と `reject` を絶対に取り違えないこと**（設計 §10-2）。
 /// reload 失敗時に `accept` を送ると `frontend_server` が「送信済み」と
 /// 誤認し、以降そのファイルの差分が二度と送られなくなる。
-final class CompilerService implements CompilerContract {
+final class CompilerService implements ServerCompilerContract {
   CompilerService({
     required this.dartAotRuntime,
     required this.frontendServerSnapshot,
@@ -239,6 +239,7 @@ final class CompilerService implements CompilerContract {
   }
 
   /// 初回コンパイル。
+  @override
   Future<CompileOutput> compile(
     Uri mainUri, {
     Duration timeout = defaultCompileTimeout,
@@ -318,6 +319,7 @@ final class CompilerService implements CompilerContract {
   }
 
   /// プロセスを終了させる。二重に呼んでも安全。
+  @override
   Future<void> shutdown() async {
     final Process? process = _process;
     if (process == null) {

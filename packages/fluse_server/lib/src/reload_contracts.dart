@@ -22,6 +22,19 @@ abstract interface class CompilerContract {
   bool get needsConfirmation;
 }
 
+/// `ServerRuntime` が使う `CompilerService` の面。
+///
+/// [CompilerContract] に初回同期の完全コンパイルと終了処理を足したもの。
+/// 統合の側は接続をまたいで同じインスタンスを持ち続けるため、寿命の
+/// 操作（[shutdown]）まで契約に含める必要がある。
+abstract interface class ServerCompilerContract implements CompilerContract {
+  /// プロジェクト全体をコンパイルする。初回同期で1度だけ使う。
+  Future<CompileOutput> compile(Uri mainUri);
+
+  /// `frontend_server` を終了する。
+  Future<void> shutdown();
+}
+
 /// [HotReloadOrchestrator] が使う `DevFSClient` の面。
 abstract interface class DevFSWriterContract {
   /// まとめて DevFS に書き込む。
