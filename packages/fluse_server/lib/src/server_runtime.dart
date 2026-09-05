@@ -79,10 +79,7 @@ final class ServerRuntime {
        _devFsFactory =
            devFsFactory ??
            ((SessionVmServiceContract vmService, FluseLogger? logger) =>
-               DevFSClient(
-                 vmService: vmService as VmServiceClient,
-                 logger: logger,
-               )) {
+               DevFSClient(vmService: vmService, logger: logger)) {
     _wsServer = wsServerFactory(this);
   }
 
@@ -115,6 +112,14 @@ final class ServerRuntime {
   ///
   /// Phase1 は1台のみ（設計 §10-10）なので1つで足りる。
   _Session? _session;
+
+  /// 接続シーケンスの実行中か。
+  ///
+  /// **`_session` の有無だけでは足りない。** 代入までに await が3つ
+  /// （bind / connect / create）挟まるので、その間に2つ目の
+  /// `vmServiceReady` が来ると両方が通り抜け、先に作った資源が
+  /// 参照を失ったまま残る。
+  bool _opening = false;
 
   StreamSubscription<ChangeSet>? _changesSubscription;
   StreamSubscription<ChangeSet>? _outdatedSubscription;
@@ -208,12 +213,13 @@ final class ServerRuntime {
     FluseConnection connection,
     String vmServiceUri,
   ) async {
-    if (_session != null) {
+    if (_session != null || _opening) {
       // 同じ端末が vmServiceReady を2度送ってきた。作り直すと
       // 前のトンネルと DevFS が宙に浮く。
-      _logger?.warn('すでにセッションが確立しています。vmServiceReady を無視します');
+      _logger?.warn('すでにセッションを確立しています。vmServiceReady を無視します');
       return;
     }
+    _opening = true;
 
     TunnelContract? tunnel;
     SessionVmServiceContract? vmService;
@@ -268,6 +274,8 @@ final class ServerRuntime {
         await _releaseParts(tunnel: tunnel, vmService: vmService, devFS: devFS);
       }
       _logger?.debug('$stackTrace');
+    } finally {
+      _opening = false;
     }
   }
 
@@ -347,7 +355,25 @@ final class ServerRuntime {
     }
 
     // 前の反映が終わってから次を始める。重ねると差分の状態が壊れる。
-    _reloadQueue = _reloadQueue.then((void _) => _reload(session, changes));
+    //
+    // **失敗をキューに残さない。** エラー完了の Future に then を繋いでも
+    // コールバックは走らず、以後ファイルを変えてもリロードが二度と
+    // 起きない。ここで吸収して次に備える。
+    _reloadQueue = _reloadQueue
+        .then((void _) => _reload(session, changes))
+        .catchError((Object error, StackTrace stackTrace) {
+          _logger?.error(
+            '変更の反映に失敗しました',
+            fields: <String, Object?>{'error': '$error'},
+          );
+          session.connection.sendMessage(
+            ErrorMessage(
+              code: FluseErrorCode.reloadRejected.wireValue,
+              message: '変更を反映できませんでした',
+              detail: '$error',
+            ),
+          );
+        });
   }
 
   Future<void> _reload(_Session session, ChangeSet changes) async {

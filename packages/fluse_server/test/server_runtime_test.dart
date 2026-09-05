@@ -66,6 +66,26 @@ final class FakeCompiler implements ServerCompilerContract {
   /// 次の recompile が返す結果。差し替えて失敗を作る。
   CompileOutput? nextRecompile;
 
+  /// recompile をここで止める。直列化の検証に使う。
+  Completer<void>? gate;
+
+  /// 次の recompile で例外を投げる。キューが止まらないことの検証に使う。
+  bool throwOnNextRecompile = false;
+
+  /// 同時に走っている recompile の数。直列化が守られていれば常に1以下。
+  int inFlight = 0;
+  int maxInFlight = 0;
+
+  /// recompile が呼ばれるたびに完了する。
+  final List<Completer<void>> _recompileWaiters = <Completer<void>>[];
+
+  /// 次の recompile 開始を待つ。
+  Future<void> nextRecompileStart() {
+    final Completer<void> waiter = Completer<void>();
+    _recompileWaiters.add(waiter);
+    return waiter.future;
+  }
+
   @override
   bool get needsConfirmation => false;
 
@@ -83,6 +103,23 @@ final class FakeCompiler implements ServerCompilerContract {
   @override
   Future<CompileOutput> recompile(Uri mainUri, List<Uri> invalidated) async {
     _log.add('compiler.recompile');
+    inFlight++;
+    maxInFlight = inFlight > maxInFlight ? inFlight : maxInFlight;
+    for (final Completer<void> waiter in _recompileWaiters.toList()) {
+      if (!waiter.isCompleted) {
+        waiter.complete();
+      }
+    }
+    _recompileWaiters.clear();
+    try {
+      await gate?.future;
+      if (throwOnNextRecompile) {
+        throwOnNextRecompile = false;
+        throw StateError('コンパイラが落ちました');
+      }
+    } finally {
+      inFlight--;
+    }
     return nextRecompile ??
         CompileOutput(
           incrementalDill: dill,
@@ -114,6 +151,9 @@ final class FakeTunnel implements TunnelContract {
   /// bind が投げる例外。接続シーケンスの失敗を作る。
   Object? bindError;
 
+  /// close が呼ばれたら完了する。解放を待つのに使う。
+  final Completer<void> closed = Completer<void>();
+
   @override
   Future<Uri> bind(String remoteVmServiceUri) async {
     _log.add('tunnel.bind');
@@ -121,7 +161,9 @@ final class FakeTunnel implements TunnelContract {
     if (error != null) {
       throw error;
     }
-    return Uri.parse('http://127.0.0.1:1234/authcode/');
+    // フェイクは認証コードを見ない。実物の形に寄せる必要も無いので
+    // 資格情報らしい文字列は置かない。
+    return Uri.parse('http://127.0.0.1:1234/');
   }
 
   @override
@@ -129,6 +171,9 @@ final class FakeTunnel implements TunnelContract {
     _log.add('tunnel.close');
     if (!_done.isCompleted) {
       _done.complete();
+    }
+    if (!closed.isCompleted) {
+      closed.complete();
     }
   }
 
@@ -144,8 +189,11 @@ final class FakeVmService implements SessionVmServiceContract {
   /// reloadSources が返す結果。
   bool reloadSucceeds = true;
 
+  /// dispose が呼ばれたら完了する。
+  final Completer<void> disposed = Completer<void>();
+
   @override
-  Uri get httpAddress => Uri.parse('http://127.0.0.1:1234/authcode/');
+  Uri get httpAddress => Uri.parse('http://127.0.0.1:1234/');
 
   @override
   Future<Uri> createDevFS(String fsName) async {
@@ -193,7 +241,12 @@ final class FakeVmService implements SessionVmServiceContract {
   }) async => _log.add('vm.setAssetDirectory');
 
   @override
-  Future<void> dispose() async => _log.add('vm.dispose');
+  Future<void> dispose() async {
+    _log.add('vm.dispose');
+    if (!disposed.isCompleted) {
+      disposed.complete();
+    }
+  }
 }
 
 final class FakeDevFS implements DevFSContract {
@@ -218,11 +271,17 @@ final class FakeDevFS implements DevFSContract {
     return baseUri!;
   }
 
+  /// destroy が呼ばれたら完了する。
+  final Completer<void> destroyed = Completer<void>();
+
   @override
   Future<void> destroy() async {
     _log.add('devfs.destroy');
     fsName = null;
     baseUri = null;
+    if (!destroyed.isCompleted) {
+      destroyed.complete();
+    }
   }
 
   @override
@@ -247,10 +306,15 @@ void main() {
   late FluseLogger logger;
   late SessionManager sessions;
   late FakeCompiler compiler;
-  late FakeTunnel tunnel;
-  late FakeVmService vmService;
-  late FakeDevFS devFS;
   late FileWatcher fileWatcher;
+
+  /// 次に作るトンネルの bind を失敗させる。
+  bool bindShouldFail = false;
+
+  /// 接続ごとに作られたフェイク。再接続で作り直されることを見る。
+  final List<FakeTunnel> tunnels = <FakeTunnel>[];
+  final List<FakeVmService> vmServices = <FakeVmService>[];
+  final List<FakeDevFS> devFSs = <FakeDevFS>[];
   final List<FakeWatchTarget> targets = <FakeWatchTarget>[];
   ServerRuntime? runtime;
 
@@ -277,9 +341,10 @@ void main() {
       heartbeatIntervalMs: 60000,
     );
     compiler = FakeCompiler(log, dill: File(p.join(root, 'out.dill')));
-    tunnel = FakeTunnel(log);
-    vmService = FakeVmService(log);
-    devFS = FakeDevFS(log);
+    bindShouldFail = false;
+    tunnels.clear();
+    vmServices.clear();
+    devFSs.clear();
     targets.clear();
 
     fileWatcher = FileWatcher(
@@ -321,9 +386,26 @@ void main() {
       dillDeviceUri: Uri.parse('lib/main.dart.dill'),
       rootLibUri: 'lib/main.dart',
       logger: logger,
-      tunnelFactory: (TunnelChannel channel, FluseLogger? _) => tunnel,
-      vmServiceConnector: (Uri uri, FluseLogger? _) async => vmService,
-      devFsFactory: (SessionVmServiceContract vm, FluseLogger? _) => devFS,
+      // 接続ごとに作り直す。使い回すと、解放済みの資源を再接続でも
+      // 掴んでしまい「作り直している」ことを検証できない。
+      tunnelFactory: (TunnelChannel channel, FluseLogger? _) {
+        final FakeTunnel created = FakeTunnel(log);
+        if (bindShouldFail) {
+          created.bindError = StateError('トンネルを張れません');
+        }
+        tunnels.add(created);
+        return created;
+      },
+      vmServiceConnector: (Uri uri, FluseLogger? _) async {
+        final FakeVmService created = FakeVmService(log);
+        vmServices.add(created);
+        return created;
+      },
+      devFsFactory: (SessionVmServiceContract vm, FluseLogger? _) {
+        final FakeDevFS created = FakeDevFS(log);
+        devFSs.add(created);
+        return created;
+      },
     );
     runtime = created;
     return created.start();
@@ -366,8 +448,9 @@ void main() {
 
     socket.add(
       jsonEncode(
+        // フェイクは URI の中身を見ない。資格情報らしい文字列は置かない。
         const VmServiceReadyMessage(
-          vmServiceUri: 'http://127.0.0.1:9999/devauth/',
+          vmServiceUri: 'http://127.0.0.1:9999/',
         ).toJson(),
       ),
     );
@@ -376,9 +459,22 @@ void main() {
     return (socket: socket, queue: queue);
   }
 
-  /// debounce の窓が閉じるまで待つ。
-  Future<void> settle() =>
-      Future<void>.delayed(const Duration(milliseconds: 120));
+  /// 監視対象へ変更を流す。
+  void emitChange(String relative) {
+    for (final FakeWatchTarget target in targets) {
+      target.emit(p.join(root, relative));
+    }
+  }
+
+  /// 変更を流し、reload が実際に始まるまで待つ。
+  ///
+  /// **実時間で待たない。** 遅い CI では debounce の窓が閉じる前に
+  /// 戻ってしまい、たまに落ちるテストになる。
+  Future<void> emitAndAwaitReload(String relative) async {
+    final Future<void> started = compiler.nextRecompileStart();
+    emitChange(relative);
+    await started;
+  }
 
   test('接続 → reload → 切断 → 再接続 が一通り通る（完了条件）', () async {
     final Uri base = await startRuntime();
@@ -404,20 +500,24 @@ void main() {
     expect(runtime!.activeDevFsName, ServerRuntime.defaultDevFsName);
 
     // --- 変更を反映 -----------------------------------------------------
-    for (final FakeWatchTarget target in targets) {
-      target.emit(p.join(root, 'lib', 'main.dart'));
-    }
-    await settle();
+    await emitAndAwaitReload(p.join('lib', 'main.dart'));
 
     expect(await nextMessage(first.queue), isA<CompileOkMessage>());
     expect(log.countOf('compiler.recompile'), 1);
 
     // --- 切断 -----------------------------------------------------------
+    final FakeTunnel firstTunnel = tunnels.single;
+    final FakeVmService firstVmService = vmServices.single;
+    final FakeDevFS firstDevFS = devFSs.single;
+
     await first.queue.cancel(immediate: true);
     await first.socket.close();
-    while (runtime!.hasSession) {
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-    }
+    // ポーリングで待たない。解放そのものの完了を待つ。
+    await Future.wait(<Future<void>>[
+      firstDevFS.destroyed.future,
+      firstVmService.disposed.future,
+      firstTunnel.closed.future,
+    ]).timeout(const Duration(seconds: 10));
 
     expect(
       log.calls,
@@ -442,6 +542,10 @@ void main() {
     expect(log.countOf('devfs.create'), 2, reason: 'DevFS を作り直す');
     expect(log.countOf('compiler.compile'), 2, reason: '初回同期をやり直す');
     expect(runtime!.activeDevFsName, ServerRuntime.defaultDevFsName);
+    // 解放済みの資源を掴み直していないこと。
+    expect(tunnels, hasLength(2));
+    expect(devFSs, hasLength(2));
+    expect(identical(tunnels.first, tunnels.last), isFalse);
   });
 
   test('コンパイルエラーは compileError として届き、監視は続く', () async {
@@ -468,10 +572,7 @@ void main() {
       ],
       sources: const <Uri>[],
     );
-    for (final FakeWatchTarget target in targets) {
-      target.emit(p.join(root, 'lib', 'main.dart'));
-    }
-    await settle();
+    await emitAndAwaitReload(p.join('lib', 'main.dart'));
 
     final FluseMessage message = await nextMessage(client.queue);
     expect(message, isA<CompileErrorMessage>());
@@ -491,11 +592,8 @@ void main() {
       await client.socket.close();
     });
 
-    vmService.reloadSucceeds = false;
-    for (final FakeWatchTarget target in targets) {
-      target.emit(p.join(root, 'lib', 'main.dart'));
-    }
-    await settle();
+    vmServices.single.reloadSucceeds = false;
+    await emitAndAwaitReload(p.join('lib', 'main.dart'));
 
     final FluseMessage message = await nextMessage(client.queue);
     expect(message, isA<ErrorMessage>());
@@ -517,10 +615,8 @@ void main() {
       await client.socket.close();
     });
 
-    for (final FakeWatchTarget target in targets) {
-      target.emit(p.join(root, 'pubspec.yaml'));
-    }
-    await settle();
+    // 指紋対象は recompile を通らないので、届いたメッセージで待つ。
+    emitChange('pubspec.yaml');
 
     final FluseMessage message = await nextMessage(client.queue);
     expect(message, isA<ErrorMessage>());
@@ -532,7 +628,8 @@ void main() {
 
   test('接続シーケンスが失敗したらエラーを返して資源を畳む', () async {
     final Uri base = await startRuntime();
-    tunnel.bindError = StateError('トンネルを張れません');
+    // 最初に作られるトンネルで失敗させる。
+    bindShouldFail = true;
 
     final PairingToken token = sessions.issuePairingToken();
     final WebSocket socket = await WebSocket.connect(
@@ -548,8 +645,9 @@ void main() {
     await nextMessage(queue);
     socket.add(
       jsonEncode(
+        // フェイクは URI の中身を見ない。資格情報らしい文字列は置かない。
         const VmServiceReadyMessage(
-          vmServiceUri: 'http://127.0.0.1:9999/devauth/',
+          vmServiceUri: 'http://127.0.0.1:9999/',
         ).toJson(),
       ),
     );
@@ -562,15 +660,98 @@ void main() {
     expect(log.countOf('devfs.create'), 0);
   });
 
+  test('vmServiceReady が連続で来てもセッションは1つだけ', () async {
+    // _session への代入までに await が3つ挟まる。入口で止めないと
+    // 両方が通り抜け、先に作った資源が参照を失ったまま残る。
+    final Uri base = await startRuntime();
+    final PairingToken token = sessions.issuePairingToken();
+    final WebSocket socket = await WebSocket.connect(
+      'ws://${base.host}:${base.port}/ws',
+    );
+    final StreamQueue<dynamic> queue = StreamQueue<dynamic>(socket);
+    addTearDown(() async {
+      await queue.cancel(immediate: true);
+      await socket.close();
+    });
+
+    socket.add(jsonEncode(helloJson(pairingToken: token.value)));
+    expect(await nextMessage(queue), isA<AcceptMessage>());
+
+    final String ready = jsonEncode(
+      const VmServiceReadyMessage(
+        vmServiceUri: 'http://127.0.0.1:9999/',
+      ).toJson(),
+    );
+    socket
+      ..add(ready)
+      ..add(ready);
+
+    expect(await nextMessage(queue), isA<ReadyMessage>());
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    expect(tunnels, hasLength(1));
+    expect(devFSs, hasLength(1));
+    expect(log.countOf('devfs.create'), 1);
+  });
+
   test('セッションが無い間の変更は反映しない', () async {
     await startRuntime();
 
-    for (final FakeWatchTarget target in targets) {
-      target.emit(p.join(root, 'lib', 'main.dart'));
-    }
-    await settle();
+    emitChange(p.join('lib', 'main.dart'));
+    // 反映されないことの確認なので、ここは窓が閉じるまで待つしかない。
+    await Future<void>.delayed(const Duration(milliseconds: 150));
 
     expect(log.countOf('compiler.recompile'), 0);
+  });
+
+  test('反映中に来た変更は待たされ、recompile は重ならない', () async {
+    // frontend_server は accept / reject の応答待ちを1つしか持てない。
+    // 重ねると差分の状態が壊れ、以降の全リロードが失敗する（設計 §10-2）。
+    final Uri base = await startRuntime();
+    final ({WebSocket socket, StreamQueue<dynamic> queue}) client =
+        await connectAndReady(base);
+    addTearDown(() async {
+      await client.queue.cancel(immediate: true);
+      await client.socket.close();
+    });
+
+    final Completer<void> gate = Completer<void>();
+    compiler.gate = gate;
+    await emitAndAwaitReload(p.join('lib', 'a.dart'));
+
+    // 1本目が止まっている間に2本目を流す。
+    final Future<void> second = compiler.nextRecompileStart();
+    emitChange(p.join('lib', 'b.dart'));
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    expect(log.countOf('compiler.recompile'), 1, reason: 'まだ2本目は始まらない');
+
+    compiler.gate = null;
+    gate.complete();
+    await second.timeout(const Duration(seconds: 10));
+
+    expect(compiler.maxInFlight, 1);
+    expect(log.countOf('compiler.recompile'), 2);
+  });
+
+  test('反映が失敗してもキューは止まらない', () async {
+    // エラー完了の Future に then を繋いでも走らない。以後ファイルを
+    // 変えてもリロードが二度と起きなくなる。
+    final Uri base = await startRuntime();
+    final ({WebSocket socket, StreamQueue<dynamic> queue}) client =
+        await connectAndReady(base);
+    addTearDown(() async {
+      await client.queue.cancel(immediate: true);
+      await client.socket.close();
+    });
+
+    compiler.throwOnNextRecompile = true;
+    await emitAndAwaitReload(p.join('lib', 'a.dart'));
+    expect(await nextMessage(client.queue), isA<ErrorMessage>());
+
+    await emitAndAwaitReload(p.join('lib', 'b.dart'));
+
+    expect(await nextMessage(client.queue), isA<CompileOkMessage>());
+    expect(log.countOf('compiler.recompile'), 2);
   });
 
   test('close で CompilerService も落とす', () async {
