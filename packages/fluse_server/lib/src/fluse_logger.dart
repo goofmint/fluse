@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 import 'redact.dart';
 
 /// ログレベル。`fluse_protocol` の `LogMessage.level` と同じ語彙を使う
@@ -91,6 +93,58 @@ final class StdoutLogSink implements FluseLogSink {
 
   @override
   Future<void> close() async {}
+}
+
+/// ログファイルを置く場所（設計 §5.2）。
+const String fluseLogDirectory = '.flutter_preview/logs';
+
+/// `.flutter_preview/logs/fluse-<timestamp>.log` を開いた [FluseLogger] を作る。
+///
+/// 全イベントをファイルへ JSON Lines で残し、[verbose] のときだけ
+/// コンソールにも流す（設計 §5.2）。**ファイルは常に開く。** 後から
+/// 「あのとき何が起きたか」を追えるようにするのがログの主目的で、
+/// コンソールへの表示はその副次的な用途にすぎない。
+///
+/// 時刻をファイル名に入れるのは、`fluse start` を回すたびに別ファイルに
+/// するため。追記で1本にまとめると、どの実行の記録かが分からなくなる。
+///
+/// 本番の起動配線（`fluse start`）は Task 5.7 の範囲。ここは組み立て方を
+/// 提供するだけ。
+FluseLogger openProjectLogger({
+  required String projectRoot,
+  bool verbose = false,
+  String? levelOverride,
+  Map<String, String>? environment,
+  DateTime Function()? clock,
+  void Function(Object error)? onWriteError,
+}) {
+  final DateTime Function() now = clock ?? DateTime.now;
+  final String stamp = now()
+      .toUtc()
+      .toIso8601String()
+      // `:` は Windows のファイル名に使えない。
+      .replaceAll(':', '-')
+      .replaceAll('.', '-');
+
+  final File file = File(
+    p.joinAll(<String>[
+      projectRoot,
+      ...fluseLogDirectory.split('/'),
+      'fluse-$stamp.log',
+    ]),
+  );
+
+  return FluseLogger(
+    sinks: <FluseLogSink>[
+      FileLogSink.open(file, onWriteError: onWriteError),
+      if (verbose) const StdoutLogSink(),
+    ],
+    minimumLevel: FluseLogger.resolveLevel(
+      explicit: levelOverride,
+      environment: environment,
+    ),
+    clock: clock,
+  );
 }
 
 /// 構造化ログ（JSON Lines）を出力するロガー。

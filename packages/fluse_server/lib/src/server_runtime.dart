@@ -396,7 +396,13 @@ final class ServerRuntime {
 
     switch (result.status) {
       case HotReloadStatus.success:
+        // compileOk は端末側のオーバーレイ解除の合図でもある
+        // （解除そのものは FluseErrorOverlay の責務、Task 4.5）。
         session.connection.sendMessage(const CompileOkMessage());
+        _logger?.info(
+          result.summary,
+          fields: <String, Object?>{'code': 'RELOAD_OK', ...result.timings},
+        );
       case HotReloadStatus.compileError:
         // 画面に赤く出す。Watch は続ける（設計 §5.1）。
         session.connection.sendMessage(
@@ -405,15 +411,52 @@ final class ServerRuntime {
             diagnostics: result.diagnostics.map(_toWire).toList(),
           ),
         );
+        // **CLI にも同じ内容を出す**（設計 §5.2）。端末を見ていない
+        // ときに気付けないと、直したつもりで古い画面を見続ける。
+        // CLI 向けには raw（frontend_server の原文）と file:line:col を
+        // 出す。エディタから開ける形が要る。
+        _logger?.error(
+          result.summary,
+          fields: <String, Object?>{
+            'code': FluseErrorCode.compileError.wireValue,
+            'diagnostics': <Object?>[
+              for (final DiagnosticEntry entry in result.diagnostics)
+                <String, Object?>{
+                  'severity': entry.severity.name,
+                  if (entry.location != null) 'location': entry.location,
+                  'raw': entry.raw,
+                },
+            ],
+          },
+        );
       case HotReloadStatus.reloadFailure:
+        final String? notices = _formatNotices(result.notices);
         session.connection.sendMessage(
           ErrorMessage(
             code: FluseErrorCode.reloadRejected.wireValue,
             message: result.summary,
+            detail: notices,
           ),
+        );
+        // notices はリストのまま記録する。整形は表示のためのもので、
+        // 機械処理する側には元の粒度が要る。
+        _logger?.warn(
+          result.summary,
+          fields: <String, Object?>{
+            'code': FluseErrorCode.reloadRejected.wireValue,
+            'notices': result.notices,
+          },
         );
     }
   }
+
+  /// VM が返した補足を人が読める形にする。空なら null。
+  ///
+  /// `ErrorMessage.detail` は `String?` なのでリストを載せられない。
+  /// プロトコルを変えると版の更新と Kotlin 側の追従が要るため、
+  /// ここで整形する。
+  String? _formatNotices(List<String> notices) =>
+      notices.isEmpty ? null : notices.join('\n');
 
   void _onOutdated(ChangeSet changes) {
     // 指紋が変わった。増分では埋められないので作り直してもらう。
