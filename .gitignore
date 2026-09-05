@@ -16,6 +16,10 @@ pubspec_overrides.yaml
 # keystore / secret を含むため絶対にコミットしない（設計 §9.2）。
 .flutter_preview/
 
+# gh CLI がカレントディレクトリに作ることがあるローカル設定。
+# hosts.yml はアクセストークンを持ちうるため絶対にコミットしない。
+.gh/
+
 # エディタ / OS
 .idea/
 *.iml

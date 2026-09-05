@@ -1,6 +1,26 @@
 # fluse_protocol_kt
 
-`fluse_protocol`（Dart）と**同一のワイヤ表現**を話す Kotlin 実装。
+`fluse_protocol`（Dart）と**同一のワイヤ表現**を話す Kotlin 実装と、
+端末側のトンネル終端 `FluseTunnel`。
+
+| パッケージ | 中身 |
+| --- | --- |
+| `dev.fluse.protocol` | ワイヤ表現（`TunnelFrame` / `FluseMessage` ほか） |
+| `dev.fluse.runtime` | `FluseTunnel` と `TunnelChannel` |
+
+## FluseTunnel
+
+サーバ側 `TunnelEndpoint`（`packages/fluse_server`）の**鏡像**。
+あちらは localhost に TCP を待ち受けて、来た接続を `open` として送り出す。
+こちらは `open` を受け取って端末の `127.0.0.1:<vmServicePort>` へ
+**自分から接続する**。
+
+Android の Dart VM Service は端末の `127.0.0.1` にしかバインドされず、
+LAN から直接は届かない。WebSocket の中を生 TCP で運ぶことで越える。
+
+WebSocket そのものは所有しない。同じ接続の text frame を制御メッセージが
+使うため、ソケットの持ち主は `FluseConnection`（Task 4.3）であり、
+トンネルは `TunnelChannel` 越しに binary frame の出入り口だけを借りる。
 
 ## なぜ独立したモジュールなのか
 
