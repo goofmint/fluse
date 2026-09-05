@@ -5,6 +5,9 @@
 /// 反映経路そのものの実装は Task 1.2 以降で追加する。
 library;
 
+export 'src/asset_bundle_service.dart';
+export 'src/asset_cache.dart';
+export 'src/asset_manifest_parser.dart';
 export 'src/auth_crypto.dart';
 export 'src/bind_address.dart';
 export 'src/build_meta.dart';

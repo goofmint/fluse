@@ -10,6 +10,8 @@ environment:
 resolution: workspace
 
 dependencies:
+  # asset の内容ハッシュ。差分転送の判定に使う。
+  crypto: ^3.0.0
   # 通信契約。トンネルフレームと制御メッセージの定義。
   fluse_protocol: ^0.1.0
   # パス結合とプロジェクト相対パスの算出。
@@ -27,6 +29,8 @@ dependencies:
   vm_service: ^15.0.2
   # ソース変更の監視。プラットフォーム差（inotify / FSEvents）を吸収する。
   watcher: ^1.1.0
+  # pubspec.yaml の flutter セクション（assets / fonts 宣言）の解析。
+  yaml: ^3.1.0
 
 dev_dependencies:
   # WebSocket の受信を1つずつ取り出す StreamQueue をテストで使う。
