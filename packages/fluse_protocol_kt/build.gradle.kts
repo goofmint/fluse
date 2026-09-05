@@ -6,6 +6,13 @@
 // JUnit を回せるようにするために独立したモジュールにしている。
 plugins {
     kotlin("jvm") version "2.1.0"
+
+    // L1統合テスト（Task 2.5）のハーネスを独立プロセスとして起動するために入れる。
+    // Dart 側テストが `installDist` の生成物
+    // （build/install/fluse_protocol_kt/bin/fluse_protocol_kt）を直接叩く。
+    // **ライブラリとしての用途は変わらない。** 本番の端末側 WebSocket は
+    // FluseConnection（Task 4.3）が持つ。
+    application
 }
 
 repositories {
@@ -25,6 +32,13 @@ dependencies {
 
 kotlin {
     jvmToolchain(17)
+}
+
+application {
+    // dev.fluse.runtime.l1harness は L1統合テスト専用。
+    // Task 4.1 で src/main/kotlin を Android プラグインへ移す際、
+    // このパッケージは持って行かないこと（java.net.http が Android に無い）。
+    mainClass.set("dev.fluse.runtime.l1harness.MainKt")
 }
 
 tasks.test {

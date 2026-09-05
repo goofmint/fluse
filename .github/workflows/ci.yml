@@ -93,3 +93,38 @@ jobs:
       # 相対パスで読む。checkout 済みのリポジトリ内なので追加の準備は要らない。
       - name: テスト
         run: ./gradlew test --no-daemon
+
+  # 言語をまたぐ L1統合テスト（Task 2.5）。Dart と JDK の両方が要るため、
+  # dart / kotlin ジョブとは別に1ランナーへ揃える。
+  #
+  # 既存の dart ジョブでもこのテストは発見されるが、JVM ハーネスが
+  # ビルドされていないので markTestSkipped で自己スキップする。
+  l1-integration:
+    name: L1統合テスト（トンネル 10MB 双方向）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: 依存解決
+        run: dart pub get
+
+      # Dart 側テストは build/install/fluse_protocol_kt/bin/fluse_protocol_kt を
+      # 既定規約のパスで探す。場所を変えるとテスト側もスキップに倒れる。
+      - name: JVM ハーネスのビルド
+        working-directory: packages/fluse_protocol_kt
+        run: ./gradlew installDist --no-daemon
+
+      - name: L1統合テスト
+        working-directory: packages/fluse_server
+        run: dart test test/tunnel_l1_integration_test.dart -r expanded
