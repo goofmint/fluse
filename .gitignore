@@ -20,6 +20,18 @@ pubspec_overrides.yaml
 # hosts.yml はアクセストークンを持ちうるため絶対にコミットしない。
 .gh/
 
+# Android のビルド生成物とローカル設定。
+# local.properties は SDK の絶対パスを持つため環境依存。
+**/android/.gradle/
+**/android/local.properties
+**/android/.cxx/
+
+# 署名鍵。混ざると取り返しがつかない（設計 §6.2）。
+*.jks
+*.keystore
+*.p12
+*.pem
+
 # エディタ / OS
 .idea/
 *.iml

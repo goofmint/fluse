@@ -35,12 +35,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
         with:
-          sdk: stable
+          # 既定ではトークンがローカルの Git 設定に残る。この後で
+          # リポジトリ内のコード（Flutter / Gradle）を走らせるため、
+          # そこから読めてしまう。
+          persist-credentials: false
+      # ルートの `dart pub get` はワークスペース全体を解決する。
+      # fluse_runtime が Flutter プラグインなので Flutter が要る。
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
 
       - name: 依存解決
-        run: dart pub get
+        run: flutter pub get
 
       - name: tool/ のフォーマット検査
         run: dart format --output=none --set-exit-if-changed tool
@@ -56,13 +63,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
         with:
-          sdk: stable
+          # 既定ではトークンがローカルの Git 設定に残る。この後で
+          # リポジトリ内のコード（Flutter / Gradle）を走らせるため、
+          # そこから読めてしまう。
+          persist-credentials: false
+
+      # fluse_runtime が Flutter プラグインになったため、素の Dart SDK では
+      # `flutter: sdk: flutter` を解決できない。ワークスペース全体の解決に
+      # Flutter が要る。
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
 
       # pub workspaces なのでルートの 1 回でメンバ全部が解決される。
       - name: 依存解決
-        run: dart pub get
+        run: flutter pub get
 
       - name: フォーマット検査
         run: dart run melos run format
@@ -81,6 +97,11 @@ jobs:
         working-directory: packages/fluse_protocol_kt
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 既定ではトークンがローカルの Git 設定に残る。この後で
+          # リポジトリ内のコード（Flutter / Gradle）を走らせるため、
+          # そこから読めてしまう。
+          persist-credentials: false
 
       - uses: actions/setup-java@v4
         with:
@@ -94,6 +115,48 @@ jobs:
       - name: テスト
         run: ./gradlew test --no-daemon
 
+  # fluse_runtime の Android プラグイン。Kotlin の単体テストを回す。
+  #
+  # プラグイン単体では Flutter エンジンの成果物が無くビルドできない。
+  # 例示アプリの Android プロジェクト経由で叩くのが確実な経路
+  # （プラグインリポジトリで一般的な方法）。
+  runtime-android:
+    name: fluse_runtime (Android unit test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 既定ではトークンがローカルの Git 設定に残る。この後で
+          # リポジトリ内のコード（Flutter / Gradle）を走らせるため、
+          # そこから読めてしまう。
+          persist-credentials: false
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      # **gradlew は使えない。** Flutter のテンプレートが
+      # examples/counter_app/android/.gitignore で wrapper を除外して
+      # いるため、リポジトリには入っていない。版は
+      # gradle/wrapper/gradle-wrapper.properties と揃えること。
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14"
+
+      # プラグインの解決には example 側の pub get が要る。
+      - name: 依存解決
+        working-directory: examples/counter_app
+        run: flutter pub get
+
+      - name: Kotlin の単体テスト
+        working-directory: examples/counter_app/android
+        run: gradle :fluse_runtime:testDebugUnitTest --no-daemon
+
   # 言語をまたぐ L1統合テスト（Task 2.5）。Dart と JDK の両方が要るため、
   # dart / kotlin ジョブとは別に1ランナーへ揃える。
   #
@@ -104,10 +167,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: dart-lang/setup-dart@v1
         with:
-          sdk: stable
+          # 既定ではトークンがローカルの Git 設定に残る。この後で
+          # リポジトリ内のコード（Flutter / Gradle）を走らせるため、
+          # そこから読めてしまう。
+          persist-credentials: false
+
+      # L1 テストは fluse_server（純 Dart）だが、ワークスペースの解決に
+      # Flutter が要る（fluse_runtime がプラグインのため）。
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
 
       - uses: actions/setup-java@v4
         with:
@@ -117,7 +187,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: 依存解決
-        run: dart pub get
+        run: flutter pub get
 
       # Dart 側テストは build/install/fluse_protocol_kt/bin/fluse_protocol_kt を
       # 既定規約のパスで探す。場所を変えるとテスト側もスキップに倒れる。
