@@ -30,6 +30,15 @@ melos:
 
     test:
       description: test ディレクトリを持つ全パッケージのテストを実行する。
+      # Flutter に依存するパッケージ（fluse_runtime）は `dart test` では
+      # 走らない。`flutter test` が要る。逆に純 Dart のパッケージを
+      # `flutter test` に載せる必要も無いので、対象を分ける。
+      steps:
+        - test:dart
+        - test:flutter
+
+    test:dart:
+      description: 純 Dart パッケージのテストを実行する。
       # packageFilters + exec は該当パッケージが0件のとき
       # NoPackageFoundScriptException で落ちるため、melos exec を直接呼ぶ。
       # まだテストが1つも無い Phase 0 の時点でも正常終了させたい。
@@ -37,7 +46,11 @@ melos:
       # `melos` ではなく `dart run melos:melos` を呼ぶ。CI には melos が
       # global activate されておらず、素の `melos` は PATH に無い。
       # dev_dependencies に固定した版が使われる点でもこちらが確実。
-      run: dart run melos:melos exec --dir-exists=test -- dart test
+      run: dart run melos:melos exec --no-flutter --dir-exists=test -- dart test
+
+    test:flutter:
+      description: Flutter パッケージのテストを実行する。
+      run: dart run melos:melos exec --flutter --dir-exists=test -- flutter test
 
     format:
       description: 全パッケージのフォーマットを検査する（差分があれば失敗）。
@@ -49,6 +62,16 @@ melos:
         fluse_protocol_kt（Kotlin 実装）のテストを実行する。
         JDK 17 が必要。Dart 側の melos exec には乗らないので独立させる。
       run: cd packages/fluse_protocol_kt && ./gradlew test
+
+    test:runtime-android:
+      description: >-
+        fluse_runtime の Android プラグインの Kotlin テストを実行する。
+        プラグイン単体では Flutter エンジンの成果物が無くビルドできないので、
+        例示アプリの Android プロジェクト経由で叩く。
+        Android SDK と JDK 17 が必要。
+      run: >-
+        cd examples/counter_app/android &&
+        ./gradlew :fluse_runtime:testDebugUnitTest
 
     check:protocol-version:
       description: >-

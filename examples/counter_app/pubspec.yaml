@@ -43,6 +43,13 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
 
+  # 端末側ランタイム。本番では `fluse init` が追記する（設計 §2.2.2）。
+  # ここでは Task 4.1 の動作確認のために手で入れている。
+  # dev_dependency のプラグインは debug にだけ含まれ release では
+  # 除外されるため、本番ビルドは汚染されない。
+  fluse_runtime:
+    path: ../../packages/fluse_runtime
+
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
   # activated in the `analysis_options.yaml` file located at the root of your

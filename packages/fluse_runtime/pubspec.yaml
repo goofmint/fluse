@@ -6,5 +6,23 @@ publish_to: none
 
 environment:
   sdk: ^3.9.0
+  flutter: '>=3.3.0'
 
 resolution: workspace
+
+dependencies:
+  # MethodChannel と WidgetsFlutterBinding。
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        # Kotlin 側の package。fluse_protocol_kt と同じ名前に揃えてある。
+        package: dev.fluse.runtime
+        pluginClass: FluseRuntimePlugin

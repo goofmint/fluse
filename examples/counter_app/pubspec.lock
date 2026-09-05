@@ -89,6 +89,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.0"
+  fluse_runtime:
+    dependency: "direct dev"
+    description:
+      path: "../../packages/fluse_runtime"
+      relative: true
+    source: path
+    version: "0.1.0"
   flutter:
     dependency: "direct main"
     description: flutter
