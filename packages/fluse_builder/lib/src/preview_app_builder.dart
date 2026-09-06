@@ -50,6 +50,17 @@ final class PreviewAppBuildException implements Exception {
       exitCode = null,
       path = null;
 
+  /// 引用符を含んでいて Gradle へ渡せない場合。
+  const PreviewAppBuildException.unquotableValue({
+    required String this.path,
+    required String quote,
+  }) : reason = '引用符（$quote）を含むため Gradle へ渡せません',
+       detail =
+           'GRADLE_OPTS は Unix では xargs、Windows ではコマンドラインで'
+           '解釈されます。どちらも引用符の入れ子を扱えません。'
+           'この文字を含まない場所へプロジェクトを移してください',
+       exitCode = null;
+
   /// `applicationIdSuffix` を頼まれたが、まだ変えられない場合。
   const PreviewAppBuildException.suffixUnsupported({required String suffix})
     : reason = 'applicationId をまだ変えられません（要求: $suffix）',
@@ -203,6 +214,7 @@ final class PreviewAppBuilder {
       environment: signingEnvironment(
         keystore: keystore,
         parent: Platform.environment,
+        isWindows: sdk.isWindows,
       ),
       secrets: secrets,
     );
@@ -292,14 +304,27 @@ final class PreviewAppBuilder {
   static Map<String, String> signingEnvironment({
     required KeystoreInfo keystore,
     required Map<String, String> parent,
+    bool isWindows = false,
   }) {
     final List<String> options = <String>[
       if ((parent['GRADLE_OPTS'] ?? '').trim().isNotEmpty)
         parent['GRADLE_OPTS']!.trim(),
-      _property(signingStoreFileProperty, keystore.file.absolute.path),
-      _property(signingStorePasswordProperty, keystore.storePassword),
-      _property(signingKeyAliasProperty, keystore.alias),
-      _property(signingKeyPasswordProperty, keystore.keyPassword),
+      property(
+        signingStoreFileProperty,
+        keystore.file.absolute.path,
+        isWindows: isWindows,
+      ),
+      property(
+        signingStorePasswordProperty,
+        keystore.storePassword,
+        isWindows: isWindows,
+      ),
+      property(signingKeyAliasProperty, keystore.alias, isWindows: isWindows),
+      property(
+        signingKeyPasswordProperty,
+        keystore.keyPassword,
+        isWindows: isWindows,
+      ),
     ];
 
     return <String, String>{...parent, 'GRADLE_OPTS': options.join(' ')};
@@ -311,8 +336,23 @@ final class PreviewAppBuilder {
   /// `xargs` に、Windows の wrapper ではコマンドラインにそのまま展開
   /// される。空白を含むパスを裸で置くと、そこで2つの引数に割れて
   /// JVM の起動ごと失敗する。利用者のホームに空白が入るのは珍しくない。
-  static String _property(String name, String value) =>
-      '-Dorg.gradle.project.$name="$value"';
+  ///
+  /// **囲む記号を platform で変える。**
+  ///
+  /// - Unix: `'`。`xargs` は単引用符の中を素通しする。`"` で囲むと、
+  ///   Windows のパスに必ず入る `\` が処理系によって落ちる。
+  /// - Windows: `"`。`cmd` は単引用符を引用符として扱わない。
+  ///
+  /// **入れ子は作れない。** どちらの解釈器も、囲みに使った記号を値の中に
+  /// 置く方法を持たない。含んでいたら弾く。黙って壊れたコマンドを組み立て
+  /// ると、Gradle が起動しない理由が分からなくなる。
+  static String property(String name, String value, {required bool isWindows}) {
+    final String quote = isWindows ? '"' : "'";
+    if (value.contains(quote)) {
+      throw PreviewAppBuildException.unquotableValue(path: value, quote: quote);
+    }
+    return '-Dorg.gradle.project.$name=$quote$value$quote';
+  }
 
   /// 署名の値を伏せる。
   ///

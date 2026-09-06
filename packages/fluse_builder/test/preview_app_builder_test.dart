@@ -270,7 +270,59 @@ void main() {
 
       expect(
         environment['GRADLE_OPTS'],
-        contains('="/Users/My Name/app/fluse-debug.keystore"'),
+        contains("='/Users/My Name/app/fluse-debug.keystore'"),
+      );
+    });
+
+    test('Unix では単引用符で囲む', () {
+      // xargs は単引用符の中を素通しする。二重引用符だと、値に入りうる
+      // バックスラッシュの扱いが処理系で変わる。
+      expect(
+        PreviewAppBuilder.property('x', '/a/b', isWindows: false),
+        "-Dorg.gradle.project.x='/a/b'",
+      );
+    });
+
+    test('Windows では二重引用符で囲む', () {
+      // cmd は単引用符を引用符として扱わない。
+      final String option = PreviewAppBuilder.property(
+        'x',
+        r'C:\Users\me\a.keystore',
+        isWindows: true,
+      );
+
+      expect(option, startsWith('-Dorg.gradle.project.x="'));
+      expect(option, endsWith('"'));
+    });
+
+    test('バックスラッシュを含む値をそのまま渡す', () {
+      // Windows のパスには必ず入る。書き換えると届かなくなる。
+      const String path = r'C:\Users\me\.flutter_preview\keystore';
+
+      expect(
+        PreviewAppBuilder.property('x', path, isWindows: true),
+        contains(path),
+      );
+    });
+
+    test('囲みに使う記号を含んでいたら弾く', () {
+      // どちらの解釈器も引用符の入れ子を扱えない。黙って壊れたコマンドを
+      // 組み立てると、Gradle が起動しない理由が分からなくなる。
+      expect(
+        () => PreviewAppBuilder.property('x', "it's", isWindows: false),
+        throwsA(isA<PreviewAppBuildException>()),
+      );
+      expect(
+        () => PreviewAppBuilder.property('x', 'say "hi"', isWindows: true),
+        throwsA(isA<PreviewAppBuildException>()),
+      );
+    });
+
+    test('もう片方の引用符は通す', () {
+      // 使う記号が違えば問題にならない。
+      expect(
+        PreviewAppBuilder.property('x', 'say "hi"', isWindows: false),
+        contains('say "hi"'),
       );
     });
 
