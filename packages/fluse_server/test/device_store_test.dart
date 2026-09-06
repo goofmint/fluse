@@ -53,6 +53,33 @@ void main() {
     );
   });
 
+  test('records は発行順に並べて返す', () {
+    final DeviceStore store = DeviceStore.readFrom(file);
+    store.upsert(
+      DeviceRecord(
+        deviceId: 'device-2',
+        deviceToken: 'token-2',
+        deviceName: 'あと',
+        issuedAt: DateTime.utc(2026, 2, 1),
+      ),
+    );
+    store.upsert(
+      DeviceRecord(
+        deviceId: 'device-1',
+        deviceToken: 'token-1',
+        deviceName: 'さき',
+        issuedAt: DateTime.utc(2026, 1, 1),
+      ),
+    );
+
+    expect(
+      store.records.map((DeviceRecord r) => r.deviceName).toList(),
+      <String>['さき', 'あと'],
+    );
+    // 触っても記憶は動かない。
+    expect(() => store.records.clear(), throwsUnsupportedError);
+  });
+
   test('remove すると保存内容からも消える', () {
     final DeviceStore store = DeviceStore.readFrom(file);
     store.upsert(record('device-1', 'token-1'));
