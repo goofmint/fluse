@@ -157,6 +157,36 @@ void main() {
       );
     });
 
+    test('絞れなければ一時ファイルも残さない', () async {
+      // 絞れなかった一時ファイルにもパスワードがそのまま入っている。
+      await expectLater(
+        KeystoreManager(
+          processManager: fake(chmodExitCode: 1),
+          isWindows: false,
+        ).ensure(previewDir),
+        throwsA(isA<KeystoreException>()),
+      );
+
+      expect(File('${passwordPath()}.tmp').existsSync(), isFalse);
+    });
+
+    test('絞れなかった時に JDK の確認を促さない', () async {
+      // 無関係な場所を探させることになる。
+      final KeystoreException error =
+          await KeystoreManager(
+                processManager: fake(chmodExitCode: 1),
+                isWindows: false,
+              )
+              .ensure(previewDir)
+              .then<KeystoreException>(
+                (KeystoreInfo _) => throw StateError('失敗するはず'),
+                onError: (Object error) => error as KeystoreException,
+              );
+
+      expect(error.toString().contains('JAVA_HOME'), isFalse);
+      expect(error.toString(), contains('600'));
+    });
+
     test('Windows では chmod を呼ばない', () async {
       // POSIX のパーミッションが無い。
       final _Recorder manager = fake();
@@ -179,13 +209,6 @@ void main() {
         processManager: fake(),
         isWindows: false,
       ).ensure(previewDir);
-
-      // FakeProcessManager は chmod を実行しないため、ここでは実際に絞る。
-      final ProcessResult result = await Process.run('chmod', <String>[
-        '600',
-        passwordPath(),
-      ]);
-      expect(result.exitCode, 0);
 
       final int mode = File(passwordPath()).statSync().mode;
       expect(mode & 0x1FF, 0x180, reason: '600 でない: ${mode.toRadixString(8)}');
@@ -247,11 +270,13 @@ void main() {
         isWindows: false,
       ).ensure(previewDir);
 
-      // 別名が既にあると keytool が失敗する。作り直す前に消しておく。
+      // **呼ぶ前に消す。** 残したままだと「別名が既にある」と言われて
+      // 失敗する。
       expect(
         again.executed.where((List<String> c) => c.first == 'keytool'),
         isNotEmpty,
       );
+      expect(again.keystoreExistedAtKeytool, <bool>[false]);
     });
   });
 
@@ -411,6 +436,12 @@ final class _Recorder implements ProcessManager {
   /// 実行されたコマンド。
   final List<List<String>> executed = <List<String>>[];
 
+  /// `keytool` を呼んだ時点で keystore が残っていたか。
+  ///
+  /// 残したまま呼ぶと「別名が既にある」と言われて失敗する。実装が先に
+  /// 消していることを、ここで確かめられるようにする。
+  final List<bool> keystoreExistedAtKeytool = <bool>[];
+
   @override
   bool canRun(Object? executable, {String? workingDirectory}) =>
       executable != 'keytool' || keytoolAvailable;
@@ -440,15 +471,22 @@ final class _Recorder implements ProcessManager {
     executed.add(args);
 
     if (args.first == 'keytool') {
+      final File file = File(args[args.indexOf('-keystore') + 1]);
+      keystoreExistedAtKeytool.add(file.existsSync());
       if (createsKeystore && keytoolExitCode == 0) {
-        final File file = File(args[args.indexOf('-keystore') + 1]);
         file.parent.createSync(recursive: true);
         file.writeAsStringSync('偽の keystore');
       }
       return ProcessResult(1, keytoolExitCode, '', keytoolStderr);
     }
     if (args.first == 'chmod') {
-      return ProcessResult(2, chmodExitCode, '', '');
+      if (chmodExitCode != 0) {
+        return ProcessResult(2, chmodExitCode, '', 'chmod に失敗しました');
+      }
+      // **本当に絞る。** 記録するだけだと、実装が chmod を呼ばなくなっても
+      // テストが通ってしまう。
+      final ProcessResult applied = Process.runSync('chmod', args.sublist(1));
+      return ProcessResult(2, applied.exitCode, '', '${applied.stderr}');
     }
     return ProcessResult(3, 0, '', '');
   }

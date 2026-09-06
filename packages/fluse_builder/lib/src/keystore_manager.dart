@@ -261,10 +261,20 @@ final class KeystoreManager {
     await temporary.writeAsString(
       '${const JsonEncoder.withIndent('  ').convert(document)}\n',
     );
-    // **先に絞ってから置き換える。** 置き換えてから絞ると、その間だけ
-    // 誰でも読める状態になる。
-    await _restrict(temporary);
-    await temporary.rename(file.path);
+
+    try {
+      // **先に絞ってから置き換える。** 置き換えてから絞ると、その間だけ
+      // 誰でも読める状態になる。
+      await _restrict(temporary);
+      await temporary.rename(file.path);
+    } on Object {
+      // **平文のまま残さない。** 絞れなかった一時ファイルにも
+      // パスワードがそのまま入っている。
+      if (temporary.existsSync()) {
+        temporary.deleteSync();
+      }
+      rethrow;
+    }
   }
 
   /// 持ち主だけが読めるようにする（設計 §9.2）。
@@ -279,14 +289,17 @@ final class KeystoreManager {
     try {
       result = await processManager.run(<String>['chmod', '600', file.path]);
     } on ProcessException catch (error) {
-      throw KeystoreException.keytoolUnavailable(detail: error.message);
+      throw KeystoreException.permissionFailed(
+        path: file.path,
+        detail: error.message,
+      );
     }
     if (result.exitCode != 0) {
       // **黙って続けない。** 読めるまま残ると、パスワードが他の利用者に
       // 見える状態になる。
-      throw KeystoreException.storeUnreadable(
+      throw KeystoreException.permissionFailed(
         path: file.path,
-        detail: 'パーミッションを 600 にできません: ${_trimmed(result.stderr) ?? ''}',
+        detail: _trimmed(result.stderr),
       );
     }
   }

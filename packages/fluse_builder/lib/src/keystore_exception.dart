@@ -7,30 +7,45 @@ final class KeystoreException implements Exception {
   const KeystoreException.keytoolNotFound()
     : reason = 'keytool が見つかりません',
       detail = null,
-      path = null;
+      path = null,
+      _aboutKeytool = true;
 
   /// `keytool` は動いたが失敗した場合。
   const KeystoreException.keytoolFailed({
     required int exitCode,
     required this.detail,
   }) : reason = 'keytool が失敗しました（終了コード $exitCode）',
-       path = null;
+       path = null,
+       _aboutKeytool = true;
 
-  /// 起動そのものができなかった場合。
+  /// `keytool` の起動そのものができなかった場合。
   const KeystoreException.keytoolUnavailable({required String this.detail})
     : reason = 'keytool を起動できません',
-      path = null;
+      path = null,
+      _aboutKeytool = true;
+
+  /// パーミッションを絞れなかった場合。
+  ///
+  /// **JDK の話ではない。** ここで JDK の確認を促すと、無関係な場所を
+  /// 探させることになる。
+  const KeystoreException.permissionFailed({
+    required String this.path,
+    required this.detail,
+  }) : reason = 'パーミッションを 600 にできません',
+       _aboutKeytool = false;
 
   /// `keystore.json` を読めなかった場合。
   const KeystoreException.storeUnreadable({
     required String this.path,
     required this.detail,
-  }) : reason = 'keystore.json を読めません';
+  }) : reason = 'keystore.json を読めません',
+       _aboutKeytool = false;
 
   /// 作ったはずのものが無い場合。
   const KeystoreException.missingOutput({required String this.path})
     : reason = 'keystore が作られませんでした',
-      detail = null;
+      detail = null,
+      _aboutKeytool = true;
 
   /// 失敗の要約。
   final String reason;
@@ -44,6 +59,9 @@ final class KeystoreException implements Exception {
   /// 原因となったファイル。分からなければ null。
   final String? path;
 
+  /// `keytool` にまつわる失敗か。案内の出し分けに使う。
+  final bool _aboutKeytool;
+
   @override
   String toString() {
     final StringBuffer buffer = StringBuffer('keystore を用意できません: $reason');
@@ -53,13 +71,18 @@ final class KeystoreException implements Exception {
     if (detail != null && detail!.isNotEmpty) {
       buffer.write('\n  詳細: $detail');
     }
-    buffer.write(
-      '\n\n  keytool は JDK に含まれています。次を確認してください:'
-      '\n    1. JDK が入っているか（Android Studio 同梱のものでも可）'
-      '\n    2. keytool が PATH にあるか'
-      '\n    3. JAVA_HOME が JDK を指しているか'
-      '\n  `fluse doctor` で環境を確認できます。',
-    );
+
+    // **JDK の案内は keytool の話にだけ添える。** パーミッションの失敗に
+    // 付けると、関係のない場所を探させることになる。
+    if (_aboutKeytool) {
+      buffer.write(
+        '\n\n  keytool は JDK に含まれています。次を確認してください:'
+        '\n    1. JDK が入っているか（Android Studio 同梱のものでも可）'
+        '\n    2. keytool が PATH にあるか'
+        '\n    3. JAVA_HOME が JDK を指しているか'
+        '\n  `fluse doctor` で環境を確認できます。',
+      );
+    }
     return buffer.toString();
   }
 }
