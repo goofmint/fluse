@@ -47,11 +47,29 @@ void main() {
   /// DevFS 上の dill の名前。flutter_tools と同じ約束。
   const String dillName = 'main.dart.incremental.dill';
 
+  /// 分布を見るために回す回数。
+  ///
+  /// **1〜2回では p95 を語れない。** 標本が少ないと p95 は実質「最大値」
+  /// になり、たまたま跳ねた1回で未達と判じることになる。
+  const int measuredCycles = 20;
+
+  /// 捨てる回数。初回は VM のキャッシュが冷えていて他より遅い。
+  const int warmupCycles = 3;
+
   /// 変更を起こす asset。`pubspec.yaml` で宣言済みのものを使う。
   const String assetPath = 'assets/images/fluse_logo.png';
 
   late Directory temp;
   late String projectRoot;
+
+  /// 段別の所要時間。**目標との比較は既定では失敗条件にしない。**
+  /// ここで取れるのはデスクトップ経路の数字で、実機とは違う（設計 §8.1 の
+  /// 目標は実機に対するもの）。回帰を見るために残す。
+  final TimingReport timings = TimingReport();
+
+  /// `FLUSE_L3_ASSERT_TIMING=1` で目標との比較を失敗条件にする。
+  final bool assertTiming =
+      Platform.environment['FLUSE_L3_ASSERT_TIMING'] == '1';
 
   String? skipReason;
   FlutterSdk? sdk;
@@ -216,6 +234,13 @@ void main() {
   });
 
   tearDownAll(() async {
+    if (timings.cycles > 0) {
+      // **画面に出す。** ログに埋めると CI の出力に残らず、遅くなった
+      // 時にいつからかを追えない。
+      // ignore: avoid_print
+      print('\n== L3 反映経路の所要時間 ==\n${timings.render()}');
+    }
+
     // 1つ失敗しても残りは続ける。DevFS を残すとアプリ側にゴミが溜まり、
     // frontend_server と flutter run を残すとプロセスが居座る。
     await _quietly(() => devFS?.destroy());
@@ -236,6 +261,19 @@ void main() {
       return null;
     }
     return orchestrator;
+  }
+
+  /// 1サイクル分を記録する。opt-in の時だけ目標との比較で落とす。
+  void record(HotReloadResult result) {
+    timings.add(result.timings);
+    if (!assertTiming) {
+      return;
+    }
+    for (final TimingVerdict verdict in timings.verdicts) {
+      if (verdict.met == false) {
+        fail('設計 §8.1 の目標に届いていません: $verdict');
+      }
+    }
   }
 
   test('Dart の変更が反映まで通る', () async {
@@ -269,6 +307,39 @@ void main() {
       contains(HotReloadOrchestrator.stageReassemble),
     );
     expect(reload.unapplied, isEmpty, reason: '入ったなら持ち越しは残らない');
+
+    record(result);
+  });
+
+  test('反映を繰り返して所要時間を測る', () async {
+    final HotReloadOrchestrator? reload = ensureReady();
+    if (reload == null) {
+      return;
+    }
+
+    final File mainFile = File(p.join(projectRoot, 'lib', 'main.dart'));
+    for (int i = 0; i < warmupCycles + measuredCycles; i++) {
+      // **毎回中身を変える。** 同じ内容だと差分が空になり、「速い」
+      // のではなく「何もしていない」時間を測ることになる。
+      mainFile.writeAsStringSync(
+        "${mainFile.readAsStringSync()}\nString fluseCycle$i() => '$i';\n",
+      );
+
+      final HotReloadResult result = await reload.reload(
+        invalidated: <Uri>[_mainUri],
+      );
+
+      expect(
+        result.status,
+        HotReloadStatus.success,
+        reason: '${i + 1}周目: ${result.summary}',
+      );
+      // **最初の数回は捨てる。** VM 側のキャッシュが冷えている間の
+      // 数字を混ぜると、実態より悪い分布になる。
+      if (i >= warmupCycles) {
+        record(result);
+      }
+    }
   });
 
   test('asset の変更が evict まで通る', () async {
@@ -306,6 +377,8 @@ void main() {
       result.timings.keys,
       contains(HotReloadOrchestrator.stageReassemble),
     );
+
+    record(result);
   });
 }
 
