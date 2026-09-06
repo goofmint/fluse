@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:fluse_builder/fluse_builder.dart';
 import 'package:path/path.dart' as p;
@@ -10,8 +11,17 @@ import 'package:test/test.dart';
 void main() {
   late Directory temp;
 
+  /// テスト用の値。
+  ///
+  /// **リテラルで書かない。** ダミーであっても、資格情報の形をした
+  /// 文字列がリポジトリに残ると本物と見分けが付かない。
+  late String storePassword;
+  late String keyPassword;
+
   setUp(() {
     temp = Directory.systemTemp.createTempSync('fluse_builder_');
+    storePassword = _secret();
+    keyPassword = _secret();
   });
 
   tearDown(() {
@@ -35,11 +45,13 @@ void main() {
     defaultTarget: 'lib/main.dart',
   );
 
-  KeystoreInfo keystoreInfo() => KeystoreInfo(
-    file: File(p.join(temp.path, 'keystore', 'fluse-debug.keystore')),
+  KeystoreInfo keystoreInfo({String? keystorePath}) => KeystoreInfo(
+    file: File(
+      keystorePath ?? p.join(temp.path, 'keystore', 'fluse-debug.keystore'),
+    ),
     alias: 'fluse-debug',
-    storePassword: 'store-secret-value',
-    keyPassword: 'key-secret-value',
+    storePassword: storePassword,
+    keyPassword: keyPassword,
   );
 
   File entrypointFile() =>
@@ -137,17 +149,40 @@ void main() {
   });
 
   group('applicationIdSuffix', () {
-    test('指定があれば渡す', () async {
+    test('頼まれても黙って無視しない', () async {
+      // **flutter に applicationId を変える口が無い。** 無視すると、
+      // 衝突を避けるために別 ID を頼んだのに同じ ID の APK が出来上がる。
       final _Recorder recorder = _Recorder(stdout: verboseLine)
         ..onStart = createApk;
 
-      final BuildResult result = await runBuild(
-        recorder: recorder,
-        applicationIdSuffix: '.preview',
+      await expectLater(
+        runBuild(recorder: recorder, applicationIdSuffix: '.preview'),
+        throwsA(isA<PreviewAppBuildException>()),
       );
+    });
 
-      expect(recorder.command, contains('--application-id-suffix=.preview'));
-      expect(result.applicationId, 'com.example.counter_app.preview');
+    test('存在しないオプションを渡さない', () async {
+      // flutter build apk に --application-id-suffix は無い。渡すと
+      // 引数の解析で落ちる。
+      final _Recorder recorder = _Recorder(stdout: verboseLine)
+        ..onStart = createApk;
+
+      await runBuild(recorder: recorder);
+
+      expect(
+        recorder.command.where(
+          (String a) => a.contains('application-id-suffix'),
+        ),
+        isEmpty,
+      );
+    });
+
+    test('計算した実効 ID は使える', () {
+      // Task 5.6 が入れる／消すの判断に使う。
+      expect(
+        PreviewAppBuilder.effectiveApplicationId('com.example.app', '.preview'),
+        'com.example.app.preview',
+      );
     });
 
     test('指定が無ければ渡さない', () async {
@@ -222,6 +257,23 @@ void main() {
       expect(environment['JAVA_HOME'], '/opt/jdk');
     });
 
+    test('空白を含むパスでも1つの引数として渡る', () {
+      // GRADLE_OPTS は Unix では xargs に、Windows ではコマンドラインへ
+      // そのまま展開される。裸で置くとそこで割れて JVM が起動しない。
+      final Map<String, String> environment =
+          PreviewAppBuilder.signingEnvironment(
+            keystore: keystoreInfo(
+              keystorePath: '/Users/My Name/app/fluse-debug.keystore',
+            ),
+            parent: <String, String>{},
+          );
+
+      expect(
+        environment['GRADLE_OPTS'],
+        contains('="/Users/My Name/app/fluse-debug.keystore"'),
+      );
+    });
+
     test('keystore は絶対パスで渡す', () {
       // Gradle の作業ディレクトリは android/ になる。相対では届かない。
       final Map<String, String> environment =
@@ -244,7 +296,7 @@ void main() {
         stdout:
             '-Dorg.gradle.project.'
             '${PreviewAppBuilder.signingStorePasswordProperty}'
-            '=store-secret-value',
+            '="$storePassword"',
       );
 
       final Object error = await runBuild(recorder: recorder).then<Object>(
@@ -252,7 +304,7 @@ void main() {
         onError: (Object error) => error,
       );
 
-      expect(error.toString().contains('store-secret-value'), isFalse);
+      expect(error.toString().contains(storePassword), isFalse);
       expect(error.toString(), contains(PreviewAppBuilder.maskSuffixSample));
     });
 
@@ -261,24 +313,46 @@ void main() {
       final _Recorder recorder = _Recorder(
         stdout:
             '-Dorg.gradle.project.'
-            '${PreviewAppBuilder.signingKeyPasswordProperty}=key-secret-value\n'
+            '${PreviewAppBuilder.signingKeyPasswordProperty}="$keyPassword"\n'
             '$verboseLine',
       )..onStart = createApk;
 
       await runBuild(recorder: recorder, onProgress: lines.add);
 
-      expect(lines.join('\n').contains('key-secret-value'), isFalse);
+      expect(lines.join('\n').contains(keyPassword), isFalse);
       expect(lines, isNotEmpty);
     });
 
-    test('伏せるのはパスワードだけ', () {
+    test('伏せるのは知っている秘密だけ', () {
       // 別名やパスまで伏せると、何が起きたか追えなくなる。
-      final String masked = PreviewAppBuilder.mask(
+      final String masked = PreviewAppBuilder.maskSecrets(
         '-Dorg.gradle.project.${PreviewAppBuilder.signingKeyAliasProperty}'
-        '=fluse-debug',
+        '="fluse-debug"',
+        PreviewAppBuilder.secretsOf(keystoreInfo()),
       );
 
       expect(masked, contains('fluse-debug'));
+    });
+
+    test('空白を含むパスワードでも取りこぼさない', () {
+      // 「= の後ろから空白まで」で探すと、後半が残る。
+      const String withSpace = 'pass word with spaces';
+      final String masked = PreviewAppBuilder.maskSecrets(
+        'GRADLE_OPTS=...="$withSpace" のあと',
+        <String>[withSpace],
+      );
+
+      expect(masked.contains(withSpace), isFalse);
+    });
+
+    test('書き方が変わっても値そのものを探す', () {
+      // Gradle が別の形で書き戻すことがある。
+      final String masked = PreviewAppBuilder.maskSecrets(
+        'Gradle は $storePassword を受け取りました',
+        PreviewAppBuilder.secretsOf(keystoreInfo()),
+      );
+
+      expect(masked.contains(storePassword), isFalse);
     });
   });
 
@@ -490,4 +564,14 @@ final class _Process implements Process {
     }
     return true;
   }
+}
+
+/// テスト用の秘密。リテラルで書かず、実行のたびに作る。
+String _secret() {
+  final Random random = Random.secure();
+  final List<int> bytes = List<int>.generate(
+    16,
+    (int _) => random.nextInt(256),
+  );
+  return base64Url.encode(bytes).replaceAll('=', '');
 }

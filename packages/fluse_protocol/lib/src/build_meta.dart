@@ -52,6 +52,14 @@ final class BuildMeta {
   /// 読み込んだ `build_meta.json` の形式版。既定は [currentSchemaVersion]。
   final int schemaVersion;
 
+  /// `build_meta.json` に書く形。
+  ///
+  /// `fluse init` が記録し、`fluse start` の増分コンパイルが読む
+  /// （設計 §10-1）。**この形を変えたら `schemaVersion` も上げること。**
+  /// 古い記録を読めたことにすると、フラグが噛み合わないまま動き出す。
+  ///
+  /// **マスクしない。** ここは記録そのもので、読み戻して比較する。
+  /// 表示に使うのは [toString] の方。
   Map<String, Object?> toJson() => <String, Object?>{
     'schemaVersion': schemaVersion,
     'trackWidgetCreation': trackWidgetCreation,
@@ -196,8 +204,11 @@ final class BuildMeta {
     return value;
   }
 
+  /// **`-D` の値は伏せる。** API キーやトークンを入れている利用者がいる。
+  /// 例外文やログに `BuildMeta` が混ざるだけで漏れる。
   @override
   String toString() =>
       'BuildMeta(trackWidgetCreation: $trackWidgetCreation, '
-      'enableAsserts: $enableAsserts, dartDefines: $dartDefines)';
+      'enableAsserts: $enableAsserts, '
+      'dartDefines: ${maskDefines(dartDefines)})';
 }

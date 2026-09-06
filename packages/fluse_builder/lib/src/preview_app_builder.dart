@@ -40,8 +40,23 @@ final class PreviewAppBuildException implements Exception {
       exitCode = null;
 
   /// `--verbose` からフラグを読み取れなかった場合。
+  ///
+  /// **多くは Gradle が Dart のコンパイルを飛ばしたため。** 前回と同じ
+  /// 入力だと `compileFlutterBuildDebug` が up-to-date になり、
+  /// `frontend_server` が起動しない。起動していなければ、その起動コマンドも
+  /// `--verbose` に出ない。
   const PreviewAppBuildException.metaUnavailable({required String this.detail})
     : reason = 'ビルドに使われたフラグを読み取れません',
+      exitCode = null,
+      path = null;
+
+  /// `applicationIdSuffix` を頼まれたが、まだ変えられない場合。
+  const PreviewAppBuildException.suffixUnsupported({required String suffix})
+    : reason = 'applicationId をまだ変えられません（要求: $suffix）',
+      detail =
+          'flutter build apk に applicationId を変える口が無く、'
+          'Flutter の Gradle プラグインも該当するプロパティを読みません。'
+          '利用者の build.gradle を書き換えずに変える手が要ります（Task 5.6）',
       exitCode = null,
       path = null;
 
@@ -168,12 +183,20 @@ final class PreviewAppBuilder {
     required KeystoreInfo keystore,
     String? applicationIdSuffix,
   }) async {
+    // **黙って無視しない。** 無視すると、衝突を避けるために別 ID を
+    // 頼んだのに同じ ID の APK が出来上がる。狙いと逆の結果になる。
+    if (applicationIdSuffix != null && applicationIdSuffix.isNotEmpty) {
+      throw PreviewAppBuildException.suffixUnsupported(
+        suffix: applicationIdSuffix,
+      );
+    }
+
     final List<String> arguments = buildArguments(
       project: project,
       entrypoint: entrypoint,
-      applicationIdSuffix: applicationIdSuffix,
     );
 
+    final List<String> secrets = secretsOf(keystore);
     final _Output output = await _run(
       arguments: arguments,
       workingDirectory: project.root,
@@ -181,13 +204,14 @@ final class PreviewAppBuilder {
         keystore: keystore,
         parent: Platform.environment,
       ),
+      secrets: secrets,
     );
 
     if (output.exitCode != 0) {
       throw PreviewAppBuildException.buildFailed(
         exitCode: output.exitCode,
         // **そのまま載せない。** `--verbose` には署名のプロパティが出る。
-        detail: mask(output.tail),
+        detail: maskSecrets(output.tail, secrets),
       );
     }
 
@@ -202,7 +226,13 @@ final class PreviewAppBuilder {
     } on BuildMetaException catch (error) {
       // **推測で埋めない。** フラグが1つ違うだけで `reloadSources` が
       // 静かに失敗し、画面が変わらない理由が分からなくなる（設計 §10-1）。
-      throw PreviewAppBuildException.metaUnavailable(detail: error.message);
+      throw PreviewAppBuildException.metaUnavailable(
+        detail:
+            '${error.message}\n'
+            '  Gradle が Dart のコンパイルを飛ばした可能性があります。'
+            '前回と同じ入力だと up-to-date と判定され、frontend_server が'
+            '起動しません。`flutter clean` の後に試してください',
+      );
     }
 
     final Directory previewDir = Directory(
@@ -229,10 +259,15 @@ final class PreviewAppBuilder {
   // ------------------------------------------------------------------ 引数
 
   /// `flutter build apk` に渡す引数。
+  ///
+  /// **`--application-id-suffix` は無い。** Flutter 3.41.9 の
+  /// `flutter build apk` にそのオプションは存在せず、渡すと引数の解析で
+  /// 落ちる。Flutter の Gradle プラグインが読むプロパティにも
+  /// 該当するものは無い（`dart-defines` / `track-widget-creation` など
+  /// のみ）。別 ID にする手立ては Task 5.6 で決める。
   static List<String> buildArguments({
     required ProjectInfo project,
     required File entrypoint,
-    String? applicationIdSuffix,
   }) => <String>[
     'build',
     'apk',
@@ -242,8 +277,6 @@ final class PreviewAppBuilder {
     '--verbose',
     '--target',
     entrypoint.path,
-    if (applicationIdSuffix != null && applicationIdSuffix.isNotEmpty)
-      '--application-id-suffix=$applicationIdSuffix',
   ];
 
   /// 実際に端末へ入る ID。
@@ -272,23 +305,42 @@ final class PreviewAppBuilder {
     return <String, String>{...parent, 'GRADLE_OPTS': options.join(' ')};
   }
 
+  /// system property を1つ組み立てる。
+  ///
+  /// **値を引用符で囲む。** `GRADLE_OPTS` は Unix の wrapper では
+  /// `xargs` に、Windows の wrapper ではコマンドラインにそのまま展開
+  /// される。空白を含むパスを裸で置くと、そこで2つの引数に割れて
+  /// JVM の起動ごと失敗する。利用者のホームに空白が入るのは珍しくない。
   static String _property(String name, String value) =>
-      '-Dorg.gradle.project.$name=$value';
+      '-Dorg.gradle.project.$name="$value"';
 
   /// 署名の値を伏せる。
   ///
   /// **例外文とログの両方に効かせる。** `--verbose` の出力には Gradle へ
   /// 渡したプロパティがそのまま出る。
-  static String mask(String text) {
-    final RegExp pattern = RegExp(
-      '(${RegExp.escape(signingStorePasswordProperty)}|'
-      '${RegExp.escape(signingKeyPasswordProperty)})=([^\\s]+)',
-    );
-    return text.replaceAllMapped(
-      pattern,
-      (Match match) => '${match.group(1)}=${maskToken(match.group(2) ?? '')}',
-    );
+  ///
+  /// **書き方で探さない。** 「`...password=` に続く空白まで」のような
+  /// 見つけ方だと、値に空白が入っていれば後半が残る。Gradle が別の形で
+  /// 書き戻した時も取りこぼす。知っている値そのものを探して置き換える。
+  static String maskSecrets(String text, Iterable<String> secrets) {
+    String masked = text;
+    // 長い方から潰す。短い方が先に当たると、長い値の一部だけが残る。
+    final List<String> ordered = <String>[
+      for (final String secret in secrets)
+        if (secret.isNotEmpty) secret,
+    ]..sort((String a, String b) => b.length.compareTo(a.length));
+
+    for (final String secret in ordered) {
+      masked = masked.replaceAll(secret, maskToken(secret));
+    }
+    return masked;
   }
+
+  /// [keystore] が持つ秘密。
+  static List<String> secretsOf(KeystoreInfo keystore) => <String>[
+    keystore.storePassword,
+    keystore.keyPassword,
+  ];
 
   // ------------------------------------------------------------------ 実行
 
@@ -296,6 +348,7 @@ final class PreviewAppBuilder {
     required List<String> arguments,
     required String workingDirectory,
     required Map<String, String> environment,
+    required List<String> secrets,
   }) async {
     final Process process;
     try {
@@ -318,7 +371,7 @@ final class PreviewAppBuilder {
       if (tail.length > tailLines) {
         tail.removeAt(0);
       }
-      onProgress?.call(mask(line));
+      onProgress?.call(maskSecrets(line, secrets));
     }
 
     final Future<void> stdoutDone = process.stdout
