@@ -323,3 +323,25 @@ $ dart run melos:melos run format   # 整形の検査
 
 - 手動の検証手順: [`docs/e2e-checklist.md`](docs/e2e-checklist.md)
 - 性能の計測結果: [`.tmp/perf-result.md`](.tmp/perf-result.md)
+
+### CI
+
+PR を出すと8つのジョブが並列で走る（`.github/workflows/ci.yml`）。
+
+| ジョブ | 何を見るか |
+|---|---|
+| `protocol-version` | Dart / Kotlin / ゴールデンの `protocolVersion` が揃っているか |
+| `dart` | 全パッケージの整形・静的解析・テスト |
+| `kotlin` | `fluse_protocol_kt` の JUnit |
+| `runtime-android` | `fluse_runtime` の Android 単体テスト |
+| `release-manifest` | release の統合マニフェストに fluse の痕跡が無いか |
+| `l1-integration` | 実 WebSocket と JVM のトンネル（10MB 双方向） |
+| `l2-integration` | 実 `frontend_server` に対する差分コンパイル |
+| `l3-integration` | 実 Flutter プロセスに対する反映経路 |
+
+L4（実機での手動シナリオ）は CI では走らせない。`docs/e2e-checklist.md` を人が
+実行する。
+
+統合テストは前提が無ければ手元では自分でスキップする。**CI では飛ばさない。**
+各ジョブが `FLUSE_REQUIRE_L1` / `L2` / `L3` を立てており、前提を整えたはずの
+ジョブでスキップが起きたら失敗する。何も検証していないのに緑になるのを防ぐため。

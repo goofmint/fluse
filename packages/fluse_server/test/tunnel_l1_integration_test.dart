@@ -11,6 +11,8 @@ import 'package:fluse_server/fluse_server.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
+import 'integration_prerequisites.dart';
+
 import 'l1_tunnel_harness.dart';
 
 /// L1統合テスト（Task 2.5 の完了条件）。
@@ -222,14 +224,8 @@ void main() {
   }
 
   /// 前提が揃っていれば true。揃っていなければ理由を添えてスキップする。
-  bool ensureReady() {
-    final String? reason = skipReason;
-    if (reason != null) {
-      markTestSkipped(reason);
-      return false;
-    }
-    return true;
-  }
+  bool ensureReady() =>
+      ensurePrerequisiteReason(skipReason, requireEnv: 'FLUSE_REQUIRE_L1');
 
   /// トンネル越しに [payload] を送り、返ってきた同じ長さのバイト列を返す。
   Future<Uint8List> roundTrip(Uint8List payload) async {
