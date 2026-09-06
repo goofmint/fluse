@@ -230,8 +230,17 @@ void main() {
         orchestrator.reload(invalidated: <Uri>[other]),
         throwsStateError,
       );
-
       expect(orchestrator.unapplied, <Uri>{other});
+
+      // 転送が直った後、同じファイルが差分に戻ってくるところまで見る。
+      devFS.error = null;
+      await orchestrator.reload(invalidated: <Uri>[mainUri]);
+
+      expect(
+        compiler.recompileCalls.last.$2,
+        unorderedEquals(<Uri>[other, mainUri]),
+      );
+      expect(orchestrator.unapplied, isEmpty);
     });
 
     test('入ったら持ち越さない', () async {

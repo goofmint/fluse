@@ -1,3 +1,7 @@
+// **リテラルでなければならない。** `package:test` はこの注釈を実行前に
+// 文字面から読むため、定数名を書くと "Expected a Duration" で読み込みに
+// 失敗する。実 frontend_server を起動して Flutter のプロジェクトを読むので
+// 10分取る。
 @Timeout(Duration(minutes: 10))
 library;
 
