@@ -253,3 +253,34 @@ jobs:
       - name: L1統合テスト
         working-directory: packages/fluse_server
         run: dart test test/tunnel_l1_integration_test.dart -r expanded
+
+  # 実 frontend_server に対する L2統合テスト（Task 6.1）。
+  #
+  # 既存の dart ジョブでもこのテストは発見されるが、examples/counter_app の
+  # 依存が解決されていないので markTestSkipped で自己スキップする。
+  # ここでフィクスチャの依存まで用意して、実際に走らせる。
+  l2-integration:
+    name: L2統合テスト（実 frontend_server）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: 依存解決
+        run: flutter pub get
+
+      # examples/counter_app は pub workspace のメンバではない。ここで
+      # 解決しておかないと package_config.json が無く、テストが自分で
+      # スキップに倒れる（何も検証しないまま緑になる）。
+      - name: フィクスチャの依存解決
+        working-directory: examples/counter_app
+        run: flutter pub get
+
+      - name: L2統合テスト
+        working-directory: packages/fluse_server
+        run: dart test test/compiler_service_l2_integration_test.dart -r expanded
