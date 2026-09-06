@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:process/process.dart';
 
 /// 起動中の `flutter run`。
@@ -139,6 +140,12 @@ final class FlutterRunHarness {
       await started.future.timeout(timeout);
       return FlutterRunHarness._(process, id, httpUriOf(ws));
     } on Object {
+      // **待つのをやめた Future の失敗を明示的に捨てる。** 捨てないと、
+      // この後の kill で exitCode 側が completeError した分が
+      // 未処理のエラーとしてテスト全体を落とす。
+      appId.future.ignore();
+      wsUri.future.ignore();
+      started.future.ignore();
       await stdoutSubscription.cancel();
       await stderrSubscription.cancel();
       process.kill();
@@ -189,6 +196,32 @@ final class FlutterRunHarness {
       // ディレクトリとして扱う。
       pathSegments: <String>[...segments, ''],
     );
+  }
+
+  /// `path:` の相対指定を [from] を基準にした絶対パスへ直す。
+  ///
+  /// 写した先のプロジェクトから `flutter run` するには、これが要る。
+  /// `../../packages/...` のままだと写した先から辿れず、pub の解決で落ちる。
+  ///
+  /// **YAML として組み直さない。** コメントも並びも残したいのと、この
+  /// ためだけに `yaml_edit` を依存へ足したくないため、`path:` の行だけを
+  /// 見る。値は引用符で囲む。空白を含むパスでも壊れないようにするため。
+  static String absolutePathDependencies(String pubspec, String from) {
+    final RegExp line = RegExp(r"""^(\s*path:\s*)(['"]?)([^'"#\n]+)\2\s*$""");
+    return pubspec
+        .split('\n')
+        .map((String text) {
+          final RegExpMatch? match = line.firstMatch(text);
+          if (match == null) {
+            return text;
+          }
+          final String value = match.group(3)!.trim();
+          if (p.isAbsolute(value)) {
+            return text;
+          }
+          return '${match.group(1)}"${p.normalize(p.join(from, value))}"';
+        })
+        .join('\n');
   }
 
   /// 落とす。何度呼んでも安全。

@@ -67,14 +67,27 @@ void main() {
   /// `package_config.json` の自パッケージは `.dart_tool` からの相対なので、
   /// 写した先でもそのまま解決できる。
   void copySampleApp() {
-    for (final String name in <String>['pubspec.yaml', 'pubspec.lock']) {
-      File(p.join(sampleApp, name)).copySync(p.join(projectRoot, name));
-    }
+    final File pubspec = File(p.join(projectRoot, 'pubspec.yaml'));
+    File(p.join(sampleApp, 'pubspec.yaml')).copySync(pubspec.path);
+    // **相対の path 依存を絶対に直す。** `counter_app` は
+    // `../../packages/fluse_runtime` を見ているため、写した先では
+    // 解決できず `flutter run` が pub の解決で落ちる。
+    pubspec.writeAsStringSync(
+      FlutterRunHarness.absolutePathDependencies(
+        pubspec.readAsStringSync(),
+        sampleApp,
+      ),
+    );
+
     for (final String dir in <String>['lib', 'assets', 'linux']) {
       _copyTree(Directory(p.join(sampleApp, dir)), projectRoot, sampleApp);
     }
-    // **pubspec より後に写す。** 先に写すと mtime が古く見え、
-    // `flutter run` が pub get をやり直す。
+
+    // **`pubspec.lock` は写さない。** 書き換えた pubspec と食い違うので、
+    // どのみち解決し直しになる。
+    // `package_config.json` は写しておく。`flutter run` が pub を
+    // 走らせ直すが、writeAsStringSync で mtime が新しくなった pubspec と
+    // 比べて古いかどうかの判定材料になる。
     Directory(p.join(projectRoot, '.dart_tool')).createSync(recursive: true);
     File(
       p.join(sampleApp, '.dart_tool', 'package_config.json'),

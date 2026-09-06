@@ -37,6 +37,50 @@ void main() {
     });
   });
 
+  group('pubspec の path 依存', () {
+    test('相対を絶対に直す', () {
+      const String pubspec = '''
+dev_dependencies:
+  fluse_runtime:
+    path: ../../packages/fluse_runtime
+''';
+
+      expect(
+        FlutterRunHarness.absolutePathDependencies(
+          pubspec,
+          '/repo/examples/app',
+        ),
+        contains('path: "/repo/packages/fluse_runtime"'),
+      );
+    });
+
+    test('絶対はそのまま', () {
+      const String pubspec = '    path: /already/absolute\n';
+
+      expect(
+        FlutterRunHarness.absolutePathDependencies(pubspec, '/repo'),
+        pubspec,
+      );
+    });
+
+    test('他の行は触らない', () {
+      // **`path:` に見えるだけの行を書き換えない。** コメントや、
+      // asset の宣言まで書き換えるとプロジェクトが壊れる。
+      const String pubspec = '''
+name: counter_app
+# path: ../../どこか
+flutter:
+  assets:
+    - assets/images/fluse_logo.png
+''';
+
+      expect(
+        FlutterRunHarness.absolutePathDependencies(pubspec, '/repo'),
+        pubspec,
+      );
+    });
+  });
+
   group('VM Service の URI', () {
     test('ws を http に直し、末尾の ws を落とす', () {
       expect(
