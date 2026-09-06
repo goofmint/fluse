@@ -4,6 +4,8 @@
 /// エントリポイントだけを差し替える方針を実装する。
 library;
 
+export 'src/fingerprint.dart';
+export 'src/fingerprint_exception.dart';
 export 'src/flutter_sdk.dart';
 export 'src/host_platform.dart';
 export 'src/plugin_ref.dart';
