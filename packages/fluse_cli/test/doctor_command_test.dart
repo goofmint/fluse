@@ -171,24 +171,17 @@ void main() {
       expect(text(), contains('keystore.json'));
     });
 
-    test(
-      'keystore.json を誰でも読めれば指摘する',
-      () async {
-        final File file = File(
-          p.join(temp.path, '.flutter_preview', 'keystore', 'keystore.json'),
-        );
-        expect(
-          Process.runSync('chmod', <String>['644', file.path]).exitCode,
-          0,
-        );
+    test('keystore.json を誰でも読めれば指摘する', () async {
+      final File file = File(
+        p.join(temp.path, '.flutter_preview', 'keystore', 'keystore.json'),
+      );
+      expect(Process.runSync('chmod', <String>['644', file.path]).exitCode, 0);
 
-        expect(await runDoctor(), 1);
+      expect(await runDoctor(), 1);
 
-        expect(text(), contains('644'));
-        // Windows に POSIX のパーミッションは無く、`chmod` も無い。
-      },
-      skip: Platform.isWindows ? 'POSIX のパーミッションが無い' : null,
-    );
+      expect(text(), contains('644'));
+      // Windows に POSIX のパーミッションは無く、`chmod` も無い。
+    }, skip: Platform.isWindows ? 'POSIX のパーミッションが無い' : null);
 
     test('実際に塞がっているポートを見つける', () async {
       // **注入した bind だけで済ませない。** 既定の実装が本当に
