@@ -10,6 +10,8 @@ environment:
 resolution: workspace
 
 dependencies:
+  # 指紋の sha256。自前で実装しない。
+  crypto: ^3.0.6
   # パス結合。Windows の区切りを正しく扱うため自前の文字列結合は使わない。
   path: ^1.9.0
   # 外部プロセス（flutter / adb / keytool）の抽象。fluse_server とは
