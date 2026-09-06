@@ -345,6 +345,26 @@ final class ServerRuntime {
 
   // --------------------------------------------------------------- 変更反映
 
+  /// 変更が無くても1度リロードする（`fluse start` の `r` キー）。
+  ///
+  /// **ファイルが変わっていなくても意味がある。** 端末側だけが古い状態に
+  /// 陥ることがあり（リロードの取りこぼし、Hot Restart の直後など）、
+  /// その時に手で押し直せる口が要る。
+  ///
+  /// 端末が繋がっていなければ何もしない。次の接続で初回同期が走る。
+  Future<void> requestReload() {
+    _onChanges(
+      ChangeSet(
+        // 変えたファイルは無い。差分は増分コンパイラが持っている分で足りる。
+        dartSources: const <String>{},
+        // asset は常に見直す。取りこぼしはここに出やすい。
+        assets: const <String>{''},
+        fingerprintTargets: const <String>{},
+      ),
+    );
+    return _reloadQueue;
+  }
+
   void _onChanges(ChangeSet changes) {
     final _Session? session = _session;
     if (session == null) {

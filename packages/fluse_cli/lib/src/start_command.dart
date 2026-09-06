@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/args.dart';
@@ -21,6 +22,7 @@ final class StartedServer {
     required this.uri,
     required this.pairingToken,
     required this.close,
+    required this.reload,
   });
 
   /// 実際に待ち受けている場所。
@@ -29,8 +31,12 @@ final class StartedServer {
   /// 手入力用の合言葉（設計 §4.2(b)）。
   final String pairingToken;
 
-  /// 畳む。
+  /// 畳む。**何度呼んでも安全でなければならない。** 通常終了と
+  /// シグナルでの終了が重なることがある。
   final Future<void> Function() close;
+
+  /// 手でリロードする（`r` キー）。
+  final Future<void> Function() reload;
 }
 
 /// サーバを立てるのに要るもの。
@@ -64,6 +70,7 @@ final class StartCommand implements FluseCommand {
     this.onOutput = print,
     this.addresses,
     this.readLine = _readStdin,
+    this.keyLines = _stdinLines,
   }) : argParser = ArgParser() {
     argParser
       ..addOption('port', help: '待ち受けるポート。', valueHelp: 'n')
@@ -85,9 +92,23 @@ final class StartCommand implements FluseCommand {
   /// 候補アドレスの取得。テストから差し替える。
   final Future<List<InternetAddress>> Function()? addresses;
 
+  /// 起動前の問い合わせ（アドレス選択）に使う。
+  ///
+  /// **ここは同期でよい。** サーバはまだ立っておらず、止めるものが無い。
   final String? Function() readLine;
 
+  /// 起動後のキー入力。
+  ///
+  /// **同期で読んではいけない。** `stdin.readLineSync()` は isolate ごと
+  /// 止めるため、待っている間サーバが接続を捌けなくなる。QR を出しても
+  /// 端末が繋がらない、という形で表面化する。
+  final Stream<String> Function() keyLines;
+
   static String? _readStdin() => stdin.readLineSync();
+
+  static Stream<String> _stdinLines() => stdin
+      .transform(const Utf8Decoder(allowMalformed: true))
+      .transform(const LineSplitter());
 
   @override
   String get name => 'start';
@@ -156,7 +177,12 @@ final class StartCommand implements FluseCommand {
       host: host,
     );
 
-    await _waitForKeys(server, context);
+    try {
+      await _waitForKeys(server, context);
+    } finally {
+      // **必ず畳む。** 掴んだままだと次の `fluse start` がポートを取れない。
+      await server.close();
+    }
     return 0;
   }
 
@@ -293,21 +319,68 @@ final class StartCommand implements FluseCommand {
   // ------------------------------------------------------------ キー入力
 
   Future<void> _waitForKeys(StartedServer server, FluseContext context) async {
-    while (true) {
-      final String? key = readLine()?.trim().toLowerCase();
-      if (key == null || key == 'q') {
-        // **必ず畳む。** 掴んだままだと次の `fluse start` がポートを
-        // 取れない。
-        await server.close();
-        return;
-      }
-      if (key == 'r') {
-        // 手動リロードの実体は Task 5.10。ここでは受け口だけ。
-        context.logger.info('手動リロードを受け付けました');
-        onOutput('  リロードを要求しました');
+    // **シグナルでも同じ道を通す。** Ctrl-C で抜けた時に畳まないと、
+    // ポートも掴んだまま残る。
+    final Completer<void> done = Completer<void>();
+    final List<StreamSubscription<ProcessSignal>> signals =
+        <StreamSubscription<ProcessSignal>>[];
+
+    void finish() {
+      if (!done.isCompleted) {
+        done.complete();
       }
     }
+
+    for (final ProcessSignal signal in _terminationSignals) {
+      try {
+        signals.add(signal.watch().listen((ProcessSignal _) => finish()));
+      } on Object {
+        // 受け取れない環境がある（Windows の SIGTERM など）。無ければ進む。
+      }
+    }
+
+    // **1つずつ片付ける。** 押している間に次が届くと、リロードの途中で
+    // `q` が先に通り、押したはずのリロードが起きないまま終わる。
+    late final StreamSubscription<String> keys;
+    keys = keyLines().listen(
+      (String line) async {
+        keys.pause();
+        try {
+          final String key = line.trim().toLowerCase();
+          if (key == 'q') {
+            finish();
+            return;
+          }
+          if (key == 'r') {
+            onOutput('  リロードします');
+            try {
+              await server.reload();
+            } on Object catch (error) {
+              // **握り潰さない。** 押したのに何も起きない状態にしない。
+              context.logger.error('手動リロードに失敗しました: $error');
+              onOutput('  リロードできませんでした: $error');
+            }
+          }
+        } finally {
+          keys.resume();
+        }
+      },
+      // 入力が閉じた（パイプ越しなど）。待ち続けない。
+      onDone: finish,
+    );
+
+    await done.future;
+    await keys.cancel();
+    for (final StreamSubscription<ProcessSignal> each in signals) {
+      await each.cancel();
+    }
   }
+
+  /// 受け取る終了のシグナル。
+  static const List<ProcessSignal> _terminationSignals = <ProcessSignal>[
+    ProcessSignal.sigint,
+    ProcessSignal.sigterm,
+  ];
 
   // ------------------------------------------------------------------ 道具
 
@@ -408,6 +481,7 @@ final class StartCommand implements FluseCommand {
       uri: uri,
       pairingToken: token.value,
       close: runtime.close,
+      reload: runtime.requestReload,
     );
   }
 }

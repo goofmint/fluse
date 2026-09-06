@@ -1,4 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:fluse_builder/fluse_builder.dart';
 import 'package:fluse_cli/fluse_cli.dart';
@@ -71,24 +74,36 @@ void main() {
   late List<String> answers;
   late _FakeServer? started;
 
+  /// テスト用の合言葉。
+  ///
+  /// **リテラルで書かない。** ダミーであっても、資格情報の形をした
+  /// 文字列がリポジトリに残ると本物と見分けが付かない。
+  late String pairingToken;
+
+  late List<String> keys;
+
   StartCommand command({
     List<InternetAddress> addresses = const <InternetAddress>[],
   }) {
+    keys = <String>['q'];
     answers = <String>['q'];
     started = null;
+    pairingToken = _secret();
     return StartCommand(
       onOutput: shown.add,
       addresses: () async => addresses.isEmpty
           ? <InternetAddress>[InternetAddress('192.168.1.5')]
           : addresses,
       readLine: () => answers.isEmpty ? null : answers.removeAt(0),
+      keyLines: () => Stream<String>.fromIterable(keys),
       serverFactory: (StartRequest request) async {
         final _FakeServer server = _FakeServer(request);
         started = server;
         return StartedServer(
           uri: Uri.parse('http://${request.host}:${request.port}'),
-          pairingToken: 'pairing-value-for-test',
+          pairingToken: pairingToken,
           close: server.close,
+          reload: server.reload,
         );
       },
     );
@@ -97,11 +112,15 @@ void main() {
   Future<int> runStart({
     List<String> arguments = const <String>[],
     List<InternetAddress> addresses = const <InternetAddress>[],
-    List<String>? keys,
+    List<String>? typed,
+    List<String>? pressed,
   }) async {
     final StartCommand start = command(addresses: addresses);
-    if (keys != null) {
-      answers = List<String>.of(keys);
+    if (typed != null) {
+      answers = List<String>.of(typed);
+    }
+    if (pressed != null) {
+      keys = List<String>.of(pressed);
     }
     return start.run(start.argParser.parse(arguments), context());
   }
@@ -125,7 +144,7 @@ void main() {
 
       await runStart();
 
-      expect(shown.join('\n'), contains('pairing-value-for-test'));
+      expect(shown.join('\n'), contains(pairingToken));
     });
 
     test('端末が見つからない時の逃げ道を出す', () async {
@@ -160,11 +179,12 @@ void main() {
 
   group('QR の中身', () {
     test('設計 §4.2(a) の形で組む', () {
+      final String token = _secret();
       final String uri = ConnectUri.build(
         lanHost: '192.168.0.10',
         port: 8180,
         projectId: '0123456789abcdef',
-        pairingToken: 'token-value',
+        pairingToken: token,
         flutterRevision: '00b0c91f06209d9e4a41f71b7a512d6eb3b9c694',
       );
 
@@ -174,7 +194,7 @@ void main() {
       expect(parsed.queryParameters['h'], '192.168.0.10');
       expect(parsed.queryParameters['p'], '8180');
       expect(parsed.queryParameters['pid'], '0123456789abcdef');
-      expect(parsed.queryParameters['t'], 'token-value');
+      expect(parsed.queryParameters['t'], token);
       // 全部載せると QR の版が上がって収まらない。
       expect(parsed.queryParameters['rev'], '00b0c91f');
     });
@@ -209,7 +229,7 @@ void main() {
         lanHost: '192.168.100.200',
         port: 65535,
         projectId: '0123456789abcdef',
-        pairingToken: 'a' * 43,
+        pairingToken: _secret(),
         flutterRevision: '00b0c91f06209d9e4a41f71b7a512d6eb3b9c694',
       );
 
@@ -262,7 +282,7 @@ void main() {
           InternetAddress('10.0.0.5'),
           InternetAddress('192.168.1.5'),
         ],
-        keys: <String>['2', 'q'],
+        typed: <String>['2'],
       );
 
       expect(shown.join('\n'), contains('どのアドレスで待ち受けますか'));
@@ -304,7 +324,7 @@ void main() {
       // 掴んだままだと次の start がポートを取れない。
       await saveState();
 
-      await runStart(keys: <String>['q']);
+      await runStart(pressed: <String>['q']);
 
       expect(started?.closed, isTrue);
     });
@@ -312,7 +332,7 @@ void main() {
     test('入力が閉じても畳む', () async {
       await saveState();
 
-      await runStart(keys: <String>[]);
+      await runStart(pressed: <String>[]);
 
       expect(started?.closed, isTrue);
     });
@@ -320,10 +340,64 @@ void main() {
     test('r は受け付けて続ける', () async {
       await saveState();
 
-      await runStart(keys: <String>['r', 'q']);
+      await runStart(pressed: <String>['r', 'q']);
 
-      expect(shown.join('\n'), contains('リロードを要求しました'));
+      expect(started?.reloads, 1);
       expect(started?.closed, isTrue);
+    });
+  });
+
+  group('待っている間も動く', () {
+    test('キー待ちがサーバを止めない', () async {
+      // **同期で読むと isolate ごと止まる。** その間サーバは接続を捌けず、
+      // QR を出しても端末が繋がらない。
+      await saveState();
+
+      final HttpServer real = await HttpServer.bind(
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+      real.listen((HttpRequest request) async {
+        request.response.statusCode = 200;
+        await request.response.close();
+      });
+
+      // キーはすぐには来ない。その間に外から叩けること。
+      final Completer<void> release = Completer<void>();
+      final StartCommand start = StartCommand(
+        onOutput: shown.add,
+        addresses: () async => <InternetAddress>[
+          InternetAddress('192.168.1.5'),
+        ],
+        readLine: () => null,
+        keyLines: () async* {
+          await release.future;
+          yield 'q';
+        },
+        serverFactory: (StartRequest request) async => StartedServer(
+          uri: Uri.parse('http://127.0.0.1:${real.port}'),
+          pairingToken: _secret(),
+          close: real.close,
+          reload: () async {},
+        ),
+      );
+
+      final Future<int> running = start.run(
+        start.argParser.parse(<String>[]),
+        context(),
+      );
+
+      // 待っている最中に応答が返ること。
+      final HttpClient client = HttpClient();
+      final HttpClientResponse response = await (await client.getUrl(
+        Uri.parse('http://127.0.0.1:${real.port}/'),
+      )).close();
+      expect(response.statusCode, 200);
+      await response.drain<void>();
+      client.close();
+
+      release.complete();
+      expect(await running, 0);
     });
   });
 
@@ -350,9 +424,14 @@ final class _FakeServer {
 
   final StartRequest request;
   bool closed = false;
+  int reloads = 0;
 
   Future<void> close() async {
     closed = true;
+  }
+
+  Future<void> reload() async {
+    reloads++;
   }
 }
 
@@ -382,4 +461,14 @@ android {
     p.join('android', 'app', 'src', 'main', 'AndroidManifest.xml'),
     '<manifest />\n',
   );
+}
+
+/// テスト用の秘密。リテラルで書かず、実行のたびに作る。
+String _secret() {
+  final Random random = Random.secure();
+  final List<int> bytes = List<int>.generate(
+    24,
+    (int _) => random.nextInt(256),
+  );
+  return base64Url.encode(bytes).replaceAll('=', '');
 }
