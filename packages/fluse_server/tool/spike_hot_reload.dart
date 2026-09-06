@@ -287,15 +287,17 @@ Future<int> _run({
 
   // **1回では測れない。** 初回は VM 側のキャッシュが冷えていて他より
   // 遅く、1回だけ見ると実態より悪い数字になる。捨てる回数を分けて数える。
+  // **元に戻せるように控える。** ここで触るのは利用者のプロジェクト。
+  // 測るために足した行を残して終わってはいけない。
+  final String originalMain = mainFile.readAsStringSync();
+
   for (int i = 0; i < warmup + cycles; i++) {
     final bool measured = i >= warmup;
-    if (i > 0) {
-      // **毎回中身を変える。** 同じ内容だと差分が空になり、
-      // 「速い」のではなく「何もしていない」時間を測ることになる。
-      mainFile.writeAsStringSync(
-        '${mainFile.readAsStringSync()}\n// fluse spike $i\n',
-      );
-    }
+    // **毎回、reload の前に中身を変える。** 変えないと差分が空になり、
+    // 「速い」のではなく「何もしていない」時間を測ることになる。
+    mainFile.writeAsStringSync(
+      '${mainFile.readAsStringSync()}\n// fluse スパイク $i 回目\n',
+    );
 
     final Stopwatch cycle = Stopwatch()..start();
     final HotReloadResult result = await orchestrator.reload(
@@ -320,12 +322,17 @@ Future<int> _run({
     }
     if (!result.isSuccess) {
       // **測り続けない。** 失敗したサイクルの時間には意味が無い。
+      mainFile.writeAsStringSync(originalMain);
       return 1;
     }
     if (measured) {
       report.add(result.timings);
     }
   }
+
+  // 足した行を消す。**成功した時も消す。** 次に測る時の初期状態が
+  // 前回の書き足しで変わっていると、比べる相手が毎回違うことになる。
+  mainFile.writeAsStringSync(originalMain);
 
   if (report.cycles > 0) {
     stdout.writeln();

@@ -21,10 +21,19 @@ final class StageStats {
   /// 何回分か。
   final int count;
 
+  /// 一番速かった回（ミリ秒）。
   final int minMs;
+
+  /// 一番遅かった回（ミリ秒）。
   final int maxMs;
+
+  /// 平均（ミリ秒）。**これだけを見ない。** たまに跳ねる段は埋もれる。
   final double meanMs;
+
+  /// 中央値（ミリ秒）。普段どのくらいか。
   final int p50Ms;
+
+  /// 95 パーセンタイル（ミリ秒）。**判定はこれで行う。**
   final int p95Ms;
 
   /// [samples] から作る。空では作れない。
@@ -57,6 +66,7 @@ final class StageStats {
     return sorted[index.clamp(0, sorted.length - 1)];
   }
 
+  /// レポートに貼る形。キーはフィールド名と同じ。
   Map<String, Object?> toJson() => <String, Object?>{
     'stage': stage,
     'count': count,
@@ -124,13 +134,15 @@ final class TimingReport {
 
   final List<TimingTarget> _targets;
 
-  /// 段ごとの標本。
-  final Map<String, List<int>> _samples = <String, List<int>>{};
+  /// サイクル1回分の `timings` をそのまま並べる。
+  ///
+  /// **段ごとの配列にしてはいけない。** 段が出たり出なかったりするため
+  /// （`evict` は変更 asset があるサイクルにしか出ない）、段ごとに詰めると
+  /// 同じ添字が別のサイクルを指し、合わせて見る目標の合計が混ざる。
+  final List<Map<String, int>> _timings = <Map<String, int>>[];
 
-  /// 何サイクル記録したか。
-  int _cycles = 0;
-
-  int get cycles => _cycles;
+  /// 記録したサイクル数。
+  int get cycles => _timings.length;
 
   /// 1サイクル分を足す。
   ///
@@ -138,20 +150,25 @@ final class TimingReport {
   /// 0 で埋めない。** 出ていない段（差分 asset が無ければ `evict` は
   /// 出ない）を 0ms として混ぜると、平均が実態より小さく見える。
   void add(Map<String, int> timings) {
-    _cycles++;
-    for (final MapEntry<String, int> entry in timings.entries) {
-      _samples.putIfAbsent(entry.key, () => <int>[]).add(entry.value);
-    }
-    _samples
-        .putIfAbsent(totalStage, () => <int>[])
-        .add(timings.values.fold(0, (int sum, int ms) => sum + ms));
+    _timings.add(<String, int>{
+      ...timings,
+      totalStage: timings.values.fold(0, (int sum, int ms) => sum + ms),
+    });
   }
 
-  /// 記録済みの段（`total` を含む）。
-  List<StageStats> get stats => <StageStats>[
-    for (final MapEntry<String, List<int>> entry in _samples.entries)
-      StageStats.of(entry.key, entry.value),
-  ];
+  /// 記録済みの段（`total` を含む）。出た回だけ数える。
+  List<StageStats> get stats {
+    final Map<String, List<int>> samples = <String, List<int>>{};
+    for (final Map<String, int> cycle in _timings) {
+      for (final MapEntry<String, int> entry in cycle.entries) {
+        samples.putIfAbsent(entry.key, () => <int>[]).add(entry.value);
+      }
+    }
+    return <StageStats>[
+      for (final MapEntry<String, List<int>> entry in samples.entries)
+        StageStats.of(entry.key, entry.value),
+    ];
+  }
 
   /// 目標との比較。標本の無い段を含む目標は落とさず `null` で返す。
   List<TimingVerdict> get verdicts => <TimingVerdict>[
@@ -166,19 +183,22 @@ final class TimingReport {
     // 合計を見る目標は、サイクルごとに足してから分布を取る。
     // **段ごとの p95 を足さない。** 別のサイクルで跳ねた値を足すと、
     // 実際には起きていない最悪値を作ってしまう。
+    //
+    // **段が1つでも欠けたサイクルは数えない。** 片方だけを足すと合計が
+    // 実際より小さくなり、届いていない目標を「達成」と判じてしまう。
     final List<int> combined = <int>[];
-    for (int i = 0; i < _cycles; i++) {
+    for (final Map<String, int> cycle in _timings) {
       int sum = 0;
-      bool present = false;
+      bool complete = true;
       for (final String stage in stages) {
-        final List<int>? samples = _samples[stage];
-        if (samples == null || i >= samples.length) {
-          continue;
+        final int? ms = cycle[stage];
+        if (ms == null) {
+          complete = false;
+          break;
         }
-        present = true;
-        sum += samples[i];
+        sum += ms;
       }
-      if (present) {
+      if (complete) {
         combined.add(sum);
       }
     }
@@ -195,7 +215,7 @@ final class TimingReport {
   /// 人が読む表。
   String render() {
     final StringBuffer buffer = StringBuffer()
-      ..writeln('計測 $_cycles サイクル')
+      ..writeln('計測 ${_timings.length} サイクル')
       ..writeln();
     for (final StageStats stat in stats) {
       buffer.writeln('  $stat');
@@ -212,7 +232,7 @@ final class TimingReport {
   /// 機械が読む形。レポートに貼るために使う。
   String toJsonString() =>
       const JsonEncoder.withIndent('  ').convert(<String, Object?>{
-        'cycles': _cycles,
+        'cycles': _timings.length,
         'stages': <Object?>[for (final StageStats stat in stats) stat.toJson()],
         'targets': <Object?>[
           for (final TimingVerdict verdict in verdicts) verdict.toJson(),
@@ -224,6 +244,7 @@ final class TimingReport {
 final class TimingVerdict {
   const TimingVerdict({required this.target, required this.stats});
 
+  /// 比べた相手。
   final TimingTarget target;
 
   /// 標本が無ければ null。
@@ -235,6 +256,7 @@ final class TimingVerdict {
     return measured == null ? null : measured.p95Ms <= target.budgetMs;
   }
 
+  /// レポートに貼る形。`met` は未計測なら null。
   Map<String, Object?> toJson() => <String, Object?>{
     'label': target.label,
     'budgetMs': target.budgetMs,

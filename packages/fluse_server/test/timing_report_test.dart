@@ -105,6 +105,25 @@ void main() {
       expect(reload.met, isTrue);
     });
 
+    test('段が欠けたサイクルは合計に数えない', () {
+      // **片方だけを足さない。** 足すと合計が実際より小さくなり、
+      // 届いていない目標を「達成」と判じてしまう。
+      final TimingReport report = reportOf(<Map<String, int>>[
+        // 揃っているのはこの1回だけ。
+        <String, int>{'reloadSources': 100, 'reassemble': 100},
+        // 欠け方が互い違い。段ごとに詰めると 200+200 の回が生まれる。
+        <String, int>{'reloadSources': 200},
+        <String, int>{'reassemble': 200},
+      ]);
+
+      final TimingVerdict reload = report.verdicts.firstWhere(
+        (TimingVerdict v) => v.target.stages.contains('reassemble'),
+      );
+      expect(reload.stats?.count, 1);
+      expect(reload.stats?.p95Ms, 200);
+      expect(reload.met, isTrue);
+    });
+
     test('計測が無い目標は達成にも未達にもしない', () {
       final TimingReport report = reportOf(<Map<String, int>>[
         <String, int>{'recompile': 100},
@@ -140,8 +159,12 @@ void main() {
       ]);
 
       final Object? decoded = jsonDecode(report.toJsonString());
-      expect(decoded, isA<Map<String, Object?>>());
-      final Map<String, Object?> map = decoded! as Map<String, Object?>;
+      if (decoded is! Map<String, Object?>) {
+        // **キャストで落とさない。** 形が変わった時に、実行時例外では
+        // なくテストの失敗として出したい。
+        fail('JSON のオブジェクトではありません: $decoded');
+      }
+      final Map<String, Object?> map = decoded;
       expect(map['cycles'], 1);
       expect(map['stages'], isA<List<Object?>>());
       expect(map['targets'], hasLength(TimingReport.defaultTargets.length));
