@@ -19,6 +19,9 @@ dependencies:
   process: ^5.0.5
   # pubspec.yaml の解析。自前で行を読むと、複数行やアンカーで崩れる。
   yaml: ^3.1.0
+  # pubspec.yaml への追記。**全体を書き直さない。** 再シリアライズすると
+  # 利用者のコメントと並びが失われる（設計 §10-8）。
+  yaml_edit: ^2.2.4
 
 dev_dependencies:
   # FakeProcessManager を再利用するためのテスト専用依存。
