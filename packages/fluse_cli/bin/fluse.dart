@@ -7,9 +7,13 @@ import 'package:fluse_server/fluse_server.dart';
 /// `fluse` の入口。
 ///
 /// **ここでは何も決めない。** 解析と振り分けは [FluseCommandRunner]、
-/// 実際の処理は各コマンドが持つ。具体的なコマンドは Task 5.8 以降で足す。
+/// 実際の処理は各コマンドが持つ。start / rebuild / doctor / devices は
+/// Task 5.9 以降で足す。
 Future<void> main(List<String> arguments) async {
-  final FluseCommandRunner runner = FluseCommandRunner(version: fluseVersion);
+  final FluseCommandRunner runner = FluseCommandRunner(
+    version: fluseVersion,
+    commands: <FluseCommand>[InitCommand()],
+  );
 
   final int code;
   try {
