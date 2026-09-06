@@ -110,7 +110,7 @@ class FluseInitProvider : ContentProvider() {
 class FluseActivityLifecycle internal constructor(
     private val application: Application,
     private val storeFactory: (Context) -> FluseStore = FluseStore::open,
-    private val handlerFactory: (Activity) -> StartupHandler = ::LoggingStartupHandler,
+    private val handlerFactory: (Activity, FluseStore) -> StartupHandler = ::ConnectingStartupHandler,
     private val background: Executor = defaultBackground,
     private val main: Executor = MainThreadExecutor,
 ) : Application.ActivityLifecycleCallbacks {
@@ -134,6 +134,7 @@ class FluseActivityLifecycle internal constructor(
                 try {
                     val store = storeFactory(application)
                     Decision(
+                        store = store,
                         path = FluseStartup.resolve(store.hasDeviceToken(), store.hasLastServer()),
                         host = store.lastHost,
                         port = store.lastPort,
@@ -156,7 +157,7 @@ class FluseActivityLifecycle internal constructor(
                     return@execute
                 }
 
-                val handler = handlerFactory(activity)
+                val handler = handlerFactory(activity, decision.store)
                 when (decision.path) {
                     StartupPath.RECONNECT -> {
                         val host = decision.host
@@ -176,6 +177,7 @@ class FluseActivityLifecycle internal constructor(
 
     /** 背景で決めた行き先。 */
     private data class Decision(
+        val store: FluseStore,
         val path: StartupPath,
         val host: String?,
         val port: Int,
@@ -228,19 +230,33 @@ internal object MainThreadExecutor : Executor {
 }
 
 /**
- * 分岐したことを記録するだけの仮実装。
+ * 分岐した先を [FluseConnection] に繋ぐ。
  *
- * 実処理は Task 4.3（`FluseConnection`）と Task 4.4
- * （`FluseConnectActivity`）で入れ替える。
+ * ペアリング画面（`FluseConnectActivity`）は Task 4.4。ここでは
+ * 差し込み口だけを残す。
  */
-internal class LoggingStartupHandler(
-    @Suppress("UNUSED_PARAMETER") activity: Activity,
+internal class ConnectingStartupHandler(
+    private val activity: Activity,
+    private val store: FluseStore,
 ) : StartupHandler {
     override fun reconnect(
         host: String,
         port: Int,
     ) {
-        Log.i(FluseRuntimePlugin.TAG, "前回のサーバへ繋ぎ直します: $host:$port（Task 4.3 で実装）")
+        val connection =
+            try {
+                FluseConnection.getOrCreate(activity.application, store)
+            } catch (e: Exception) {
+                // **握り潰さない。** assets の素性が無ければ `hello` を
+                // 組み立てられず、プレビューは成立しない。ただしアプリ自体は
+                // 動かす。fluse は dev_dependency であって本体ではない。
+                Log.e(FluseRuntimePlugin.TAG, "接続の準備ができませんでした: $e")
+                return
+            }
+        // **接続より先に届いた分を渡す。** 渡さないと、受理できたのに
+        // 送るものが無い状態になり、初回の vmServiceReady が落ちる。
+        FluseRuntimePlugin.latestVmServiceUri?.let { connection.vmServiceReady(it) }
+        connection.connect(FluseEndpoint(host, port))
     }
 
     override fun pair() {

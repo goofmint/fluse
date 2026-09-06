@@ -36,7 +36,7 @@ private val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(30)
  * - `wsUrl`: Dart 側が立てた WebSocket サーバの URL（`ws://127.0.0.1:<port>`）
  * - `vmServicePort`: 本物の VM Service に見立てたエコーサーバのポート
  *
- * **Task 4.1 でこのパッケージを Android プラグインへ移してはいけない。**
+ * **このパッケージを Android プラグインへ移してはいけない。**
  * `java.net.http` は Android のクラスライブラリに無い。
  */
 fun main(args: Array<String>) {

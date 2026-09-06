@@ -6,8 +6,8 @@ import kotlinx.coroutines.flow.Flow
  * トンネルが使う WebSocket の binary チャネル。
  *
  * **WebSocket そのものは所有しない。** 同じ接続の text frame を制御
- * メッセージが使うため、ソケットの持ち主は `FluseConnection`（Task 4.3）で
- * あり、トンネルは binary frame の出入り口だけを借りる。
+ * メッセージが使うため、ソケットの持ち主は `FluseConnection` であり、
+ * トンネルは binary frame の出入り口だけを借りる。
  *
  * サーバ側 `packages/fluse_server/lib/src/tunnel_channel.dart` の鏡像。
  * 責務の分け方を両側で揃えておかないと、片方だけ WebSocket を閉じて
