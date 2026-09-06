@@ -7,8 +7,11 @@
 /// ここを変更したら Kotlin 側も必ず追従させること。
 library;
 
+export 'src/build_meta.dart';
+export 'src/build_meta_parser.dart';
 export 'src/diagnostic_entry.dart';
 export 'src/fluse_message.dart';
+export 'src/mask.dart';
 export 'src/message_codes.dart';
 export 'src/protocol_exception.dart';
 export 'src/protocol_version.dart';

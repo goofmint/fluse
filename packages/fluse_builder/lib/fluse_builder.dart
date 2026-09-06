@@ -13,6 +13,7 @@ export 'src/keystore_exception.dart';
 export 'src/keystore_info.dart';
 export 'src/keystore_manager.dart';
 export 'src/plugin_ref.dart';
+export 'src/preview_app_builder.dart';
 export 'src/project_analyzer.dart';
 export 'src/project_info.dart';
 export 'src/project_not_flutter_exception.dart';

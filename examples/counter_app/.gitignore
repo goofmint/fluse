@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# fluse の作業場所。**取り込まないこと。**
+# 接続用の secret と署名鍵が入る（設計 §10-7）。
+.flutter_preview/
