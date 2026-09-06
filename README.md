@@ -28,7 +28,8 @@ Phase1 のスコープ外は[下の節](#phase1-のスコープ外)にまとめ�
 
 ## 前提
 
-- Flutter SDK（`flutter` が PATH にあるか、`--flutter-sdk` で場所を渡せること）
+- Flutter SDK **3.29.0 以上**（`flutter` が PATH にあるか、`--flutter-sdk` で
+  場所を渡せること）。下限の理由は[下](#端末側ランタイムが-release-に入らない理由)
 - `adb`（Android SDK の platform-tools）
 - `keytool`（JDK に入っている）
 - 開発 PC と端末が**同じ Wi-Fi / LAN セグメント**に居ること
@@ -153,6 +154,11 @@ serveApk: true
 | `dartDefines` | `[]` | `-D` で渡す値。順序も含めて意味がある |
 | `serveApk` | `true` | 案内ページから APK を配るか |
 
+`serveApk: false` にすると、案内ページにダウンロードのボタンが出ず、`/apk` も
+404 を返す。**その場合、端末へ入れる道は USB だけになる。** USB で繋いで
+`fluse init`（または `fluse rebuild`）を実行するか、`fluse init` が表示する
+`.flutter_preview/build/preview.apk` を手で入れる。
+
 決め方には順序がある。**その場の指定が勝つ。**
 
 ```text
@@ -181,9 +187,19 @@ CLI 引数  >  環境変数（FLUSE_PORT）  >  fluse.yaml  >  既定値
 すべてのインタフェースで待つが、**その判断は渡した人のものになる。**
 何も警告しないので、書く前に上の表をもう一度読むこと。
 
+### 端末側ランタイムが release に入らない理由
+
 Preview App の権限（INTERNET / CAMERA）と平文通信の許可は **debug ビルドにしか
 入らない**（設計 §10-4）。release の APK にこれらは載らず、CI が毎回それを
 確かめている。
+
+端末側ランタイム（`fluse_runtime`）は dev_dependency として入るため、release の
+ビルドからは外れる。**ただしこれは Flutter 3.29.0 以上での話。** dev_dependency の
+プラグインが Android の release ビルドから実際に外れるようになったのは
+flutter/flutter#161343 からで、それを含む最初のリリースが 3.29.0。それ以前は
+`.flutter-plugins-dependencies` に印が付くだけで外れない。`fluse_runtime` は
+`environment.flutter` を `>=3.29.0` にしてあるので、古い Flutter では解決の
+段階で弾かれる。
 
 ## Phase1 のスコープ外
 

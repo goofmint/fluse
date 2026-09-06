@@ -297,7 +297,7 @@ Future<void> flusePreviewMain(FutureOr<void> Function() appMain);
 ビルドは `flutter build apk --debug --target=.flutter_preview/fluse_main.dart` で行う。
 
 - **`fluse_runtime` の注入**: `fluse init` がユーザーの `pubspec.yaml` の `dev_dependencies` に `fluse_runtime` を追記する。
-  Flutter 3.27+ は dev_dependency のプラグインを **debug には含め release では除外する**（`flutter_plugins.dart:1261` で検証済み）。したがって本番ビルドは一切汚染されない。追記は idempotent とし、既存の場合は何もしない。
+  Flutter 3.29+ は dev_dependency のプラグインを **debug には含め release では除外する**（`flutter_plugins.dart:1261`）。**3.27 ではない。** Android の release ビルドから実際に外れるようになったのは flutter/flutter#161343（`818133b8b03`）からで、これを含む最初のリリースが 3.29.0（`git tag --contains` で確認）。それ以前は `.flutter-plugins-dependencies` に印が付くだけで除外されない。`fluse_runtime` の `environment.flutter` はこのため `>=3.29.0`。したがって本番ビルドは一切汚染されない。追記は idempotent とし、既存の場合は何もしない。
 
 #### 2.2.3 `fluse_server`
 

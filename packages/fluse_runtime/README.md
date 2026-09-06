@@ -12,6 +12,12 @@
 含まれる。権限（INTERNET / CAMERA）も平文通信の許可も、release の APK には
 載らない（設計 §10-4）。
 
+**これは Flutter 3.29.0 以上での話。** dev_dependency のプラグインが Android の
+release ビルドから実際に外れるようになったのは flutter/flutter#161343 からで、
+それを含む最初のリリースが 3.29.0。それ以前は
+`.flutter-plugins-dependencies` に印が付くだけで外れない。`environment.flutter`
+を `>=3.29.0` にしてあるのはこのため。**下げてはいけない。**
+
 宣言は `android/src/main/AndroidManifest.xml` ではなく
 `android/src/debug/AndroidManifest.xml` に置いてある。`src/main` は空。
 CI（`release-manifest` ジョブ）が、release の統合マニフェストに fluse の痕跡が
