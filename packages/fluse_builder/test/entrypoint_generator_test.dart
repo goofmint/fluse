@@ -276,6 +276,22 @@ flutter:
       );
     });
 
+    test('dependencies にあれば dev_dependencies へは足さない', () async {
+      // 二重の依存になり unnecessary_dev_dependency に引っかかる。
+      createProject(
+        pubspec: pubspecWithComments.replaceFirst(
+          'dependencies:\n',
+          'dependencies:\n  fluse_runtime: ^0.1.0\n',
+        ),
+      );
+      final String before = read('pubspec.yaml');
+
+      final EntrypointResult result = await generate();
+
+      expect(result.addedDependency, isFalse);
+      expect(read('pubspec.yaml'), before);
+    });
+
     test('pubspec.yaml が無ければ弾く', () async {
       await expectLater(
         const EntrypointGenerator().generate(
@@ -356,6 +372,44 @@ flutter:
       final EntrypointResult result = await generate();
 
       expect(result.addedGitignore, isTrue);
+    });
+  });
+
+  group('落ちたときに残すもの', () {
+    test('pubspec が壊れていれば置き場も作らない', () async {
+      // 置き場だけが残ると、無視設定の無いまま secret と署名鍵の場所が
+      // できてしまう（設計 §10-7）。
+      createProject();
+      write('pubspec.yaml', 'name: counter_app\ndependencies: [壊れている\n');
+
+      await expectLater(
+        const EntrypointGenerator().generate(
+          project: ProjectInfo(
+            root: temp.path,
+            packageName: 'counter_app',
+            applicationId: 'com.example.counter_app',
+            defaultTarget: 'lib/main.dart',
+          ),
+          userTarget: 'lib/main.dart',
+        ),
+        throwsA(isA<EntrypointGeneratorException>()),
+      );
+
+      expect(
+        Directory(p.join(temp.path, '.flutter_preview')).existsSync(),
+        isFalse,
+      );
+    });
+
+    test('置き場を作ったら中身より先に無視設定を入れる', () async {
+      // 無視されないまま鍵の置き場が残る時間を作らない。
+      createProject();
+
+      final EntrypointResult result = await generate();
+
+      expect(result.addedGitignore, isTrue);
+      expect(read('.gitignore'), contains('.flutter_preview/'));
+      expect(result.entrypoint.existsSync(), isTrue);
     });
   });
 

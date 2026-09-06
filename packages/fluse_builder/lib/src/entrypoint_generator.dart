@@ -90,15 +90,26 @@ final class EntrypointGenerator {
       userTarget: userTarget,
     );
 
+    // **順序を崩さない。**
+    //
+    // 1. pubspec を先に片付ける。ここで落ちうるため、生成物を作った後だと
+    //    「置き場だけが残る」状態になる。
+    // 2. 置き場を作ったら、中身を書く前に無視設定を入れる。`secret` と
+    //    署名鍵が入る場所なので、無視されないまま残す時間を作らない
+    //    （設計 §10-7）。
+    final bool addedDependency = await _ensureDependency(root, constraint);
+
     final File entrypoint = File(p.join(root, previewDirName, entrypointName));
     await entrypoint.parent.create(recursive: true);
+    final bool addedGitignore = await _ensureGitignore(root);
+
     // 自動生成物なので毎回上書きする。中身が同じなら差分は出ない。
     await entrypoint.writeAsString(buildSource(importUri));
 
     return EntrypointResult(
       entrypoint: entrypoint,
-      addedDependency: await _ensureDependency(root, constraint),
-      addedGitignore: await _ensureGitignore(root),
+      addedDependency: addedDependency,
+      addedGitignore: addedGitignore,
     );
   }
 
@@ -183,6 +194,16 @@ Future<void> main() => flusePreviewMain(app.main);
         'pubspec.yaml を YAML として読めません: $error',
         path: path,
       );
+    }
+
+    // **`dependencies` 側も見る。** そちらに入れている利用者に対して
+    // `dev_dependencies` へも足すと、二重の依存になって
+    // `unnecessary_dev_dependency` に引っかかる。
+    final YamlNode dependencies = editor.parseAt(<Object>[
+      'dependencies',
+    ], orElse: () => wrapAsYamlNode(null));
+    if (dependencies is YamlMap && dependencies.containsKey(runtimePackage)) {
+      return false;
     }
 
     final YamlNode devDependencies = editor.parseAt(<Object>[
