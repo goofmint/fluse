@@ -352,48 +352,60 @@ final class ServerRuntime {
   /// その時に手で押し直せる口が要る。
   ///
   /// 端末が繋がっていなければ何もしない。次の接続で初回同期が走る。
-  Future<void> requestReload() {
-    _onChanges(
-      ChangeSet(
-        // 変えたファイルは無い。差分は増分コンパイラが持っている分で足りる。
-        dartSources: const <String>{},
-        // asset は常に見直す。取りこぼしはここに出やすい。
-        assets: const <String>{''},
-        fingerprintTargets: const <String>{},
-      ),
-    );
-    return _reloadQueue;
-  }
+  ///
+  /// **失敗はそのまま投げる。** ファイル変更による自動リロードと違い、
+  /// これは人が押した操作。黙って何も起きないと、押したこと自体が
+  /// 無かったように見える。
+  Future<void> requestReload() => _enqueue(
+    ChangeSet(
+      // 変えたファイルは無い。差分は増分コンパイラが持っている分で足りる。
+      dartSources: const <String>{},
+      // asset は常に見直す。取りこぼしはここに出やすい。
+      assets: const <String>{''},
+      fingerprintTargets: const <String>{},
+    ),
+  );
 
   void _onChanges(ChangeSet changes) {
+    // 自動の反映では投げない。**握り潰すのではなく、行き先が違う。**
+    // 失敗は端末へ `error` として送り、ログにも残す（_enqueue の中）。
+    unawaited(_enqueue(changes).catchError((Object _) {}));
+  }
+
+  /// 反映を1本の列に並べる。返す Future はこの1回ぶんの結果。
+  Future<void> _enqueue(ChangeSet changes) {
     final _Session? session = _session;
     if (session == null) {
       // 端末が繋がっていない間の変更は捨てる。次の接続で初回同期が
       // 走り、その時点の内容が丸ごと入る。
       _logger?.debug('セッションが無いため変更を保留しません');
-      return;
+      return Future<void>.value();
     }
 
     // 前の反映が終わってから次を始める。重ねると差分の状態が壊れる。
     //
     // **失敗をキューに残さない。** エラー完了の Future に then を繋いでも
     // コールバックは走らず、以後ファイルを変えてもリロードが二度と
-    // 起きない。ここで吸収して次に備える。
-    _reloadQueue = _reloadQueue
-        .then((void _) => _reload(session, changes))
-        .catchError((Object error, StackTrace stackTrace) {
-          _logger?.error(
-            '変更の反映に失敗しました',
-            fields: <String, Object?>{'error': '$error'},
-          );
-          session.connection.sendMessage(
-            ErrorMessage(
-              code: FluseErrorCode.reloadRejected.wireValue,
-              message: '変更を反映できませんでした',
-              detail: '$error',
-            ),
-          );
-        });
+    // 起きない。列は必ず正常完了させ、結果は別の Future で返す。
+    final Future<void> outcome = _reloadQueue.then(
+      (void _) => _reload(session, changes),
+    );
+
+    _reloadQueue = outcome.catchError((Object error, StackTrace stackTrace) {
+      _logger?.error(
+        '変更の反映に失敗しました',
+        fields: <String, Object?>{'error': '$error'},
+      );
+      session.connection.sendMessage(
+        ErrorMessage(
+          code: FluseErrorCode.reloadRejected.wireValue,
+          message: '変更を反映できませんでした',
+          detail: '$error',
+        ),
+      );
+    });
+
+    return outcome;
   }
 
   Future<void> _reload(_Session session, ChangeSet changes) async {

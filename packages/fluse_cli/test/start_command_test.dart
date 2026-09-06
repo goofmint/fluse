@@ -337,6 +337,31 @@ void main() {
       expect(started?.closed, isTrue);
     });
 
+    test('リロードに失敗したら伝える', () async {
+      // **押したのに何も起きない状態にしない。**
+      await saveState();
+
+      final StartCommand start = StartCommand(
+        onOutput: shown.add,
+        addresses: () async => <InternetAddress>[
+          InternetAddress('192.168.1.5'),
+        ],
+        readLine: () => null,
+        keyLines: () => Stream<String>.fromIterable(<String>['r', 'q']),
+        serverFactory: (StartRequest _) async => StartedServer(
+          uri: Uri.parse('http://192.168.1.5:8180'),
+          pairingToken: _secret(),
+          close: () async {},
+          reload: () async => throw StateError('コンパイルできません'),
+        ),
+      );
+
+      await start.run(start.argParser.parse(<String>[]), context());
+
+      expect(shown.join('\n'), contains('リロードできませんでした'));
+      expect(shown.join('\n'), contains('コンパイルできません'));
+    });
+
     test('r は受け付けて続ける', () async {
       await saveState();
 
@@ -387,16 +412,23 @@ void main() {
         context(),
       );
 
-      // 待っている最中に応答が返ること。
+      // **落ちても後片付けする。** 途中で投げると、待っているコマンドも
+      // サーバもテストの後に残る。
       final HttpClient client = HttpClient();
-      final HttpClientResponse response = await (await client.getUrl(
-        Uri.parse('http://127.0.0.1:${real.port}/'),
-      )).close();
-      expect(response.statusCode, 200);
-      await response.drain<void>();
-      client.close();
+      try {
+        // 待っている最中に応答が返ること。
+        final HttpClientResponse response = await (await client.getUrl(
+          Uri.parse('http://127.0.0.1:${real.port}/'),
+        )).close();
+        expect(response.statusCode, 200);
+        await response.drain<void>();
+      } finally {
+        client.close(force: true);
+        if (!release.isCompleted) {
+          release.complete();
+        }
+      }
 
-      release.complete();
       expect(await running, 0);
     });
   });
