@@ -6,7 +6,12 @@ publish_to: none
 
 environment:
   sdk: ^3.9.0
-  flutter: '>=3.3.0'
+  # **3.29.0 未満では使えない。** dev_dependency のプラグインを release から
+  # 実際に外すようになったのは 3.29.0 から（flutter/flutter#161343、
+  # `818133b8b03`。それ以前は `.flutter-plugins-dependencies` に印は付くが、
+  # Android の release ビルドから外れない）。ここを下げると、release の APK に
+  # 端末側ランタイムが入る余地ができる（設計 §6.2）。
+  flutter: '>=3.29.0'
 
 resolution: workspace
 
