@@ -186,6 +186,16 @@ final class DeviceStore implements DeviceStoreContract {
   /// 登録済みの端末数。
   int get length => _records.length;
 
+  /// 登録済みの端末を並べる。`fluse devices` の表示に使う。
+  ///
+  /// **書き換えられない形で返す。** 呼び出し側が触れると、ファイルに
+  /// 書かれていない登録が記憶の上だけで増える。
+  List<DeviceRecord> get records => List<DeviceRecord>.unmodifiable(
+    _records.values.toList()..sort(
+      (DeviceRecord a, DeviceRecord b) => a.issuedAt.compareTo(b.issuedAt),
+    ),
+  );
+
   /// **保存に失敗したら記憶も元に戻す。** 書けていないのに登録済みとして
   /// 振る舞うと、再起動で消えるトークンを端末に渡してしまう。
   @override
