@@ -364,6 +364,51 @@ serveApk: true
       await notFound.drain<void>();
     });
 
+    test('1件の失敗で受付ごと止まらない', () async {
+      // `addStream` だけでなく `close()` も切断で投げる。受付の輪から
+      // 抜けると、以後どの要求にも応えられなくなる。
+      final List<InternetAddress> lan = await _privateAddresses();
+      if (lan.isEmpty) {
+        markTestSkipped('私設 IPv4 を持たない環境');
+        return;
+      }
+
+      final List<Object> errors = <Object>[];
+      final ApkServer server = await ApkServer.serve(
+        apk,
+        addresses: () async => lan,
+        onError: errors.add,
+      );
+      addTearDown(server.close);
+
+      final HttpClient client = HttpClient();
+      addTearDown(() => client.close(force: true));
+
+      // 1件目: 配信の途中で読めなくする。切断でも同じ経路を通る。
+      apk.deleteSync();
+      Directory(apk.path).createSync();
+      try {
+        final HttpClientResponse broken = await (await client.getUrl(
+          server.uri,
+        )).close();
+        await broken.drain<void>();
+      } on Object {
+        // 相手から見れば応答が壊れる。それでよい。
+      }
+      Directory(apk.path).deleteSync();
+      apk.writeAsStringSync('偽の APK');
+
+      expect(errors, isNotEmpty, reason: '失敗が届いていない');
+
+      // 2件目: それでも応えられること。
+      final HttpClientResponse again = await (await client.getUrl(
+        server.uri,
+      )).close();
+
+      expect(again.statusCode, 200);
+      expect(await again.transform(utf8.decoder).join(), '偽の APK');
+    });
+
     test('プライベート IPv4 だけを選ぶ', () async {
       // loopback では端末から届かない。公衆側に出すとソースを晒す。
       final InternetAddress chosen = await ApkServer.resolveLanAddress(

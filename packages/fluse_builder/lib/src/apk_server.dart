@@ -30,11 +30,15 @@ final class ApkServer {
   ///
   /// **合言葉を付ける。** APK には Dart のソース（kernel）が入っている
   /// （設計 §6.1）。URL を知られただけで取られては困る。
+  ///
+  /// [onError] には1件ごとの失敗が届く。多くは端末側が途中で切っただけ
+  /// だが、握り潰すと「なぜか落ちてこない」で終わる。
   static Future<ApkServer> serve(
     File apk, {
     int port = 0,
     Future<List<InternetAddress>> Function()? addresses,
     Random? random,
+    void Function(Object error)? onError,
   }) async {
     if (!apk.existsSync()) {
       throw DeviceInstallException.apkMissing(path: apk.path);
@@ -52,36 +56,62 @@ final class ApkServer {
       queryParameters: <String, String>{'t': token},
     );
 
-    unawaited(_listen(server, apk, token));
+    unawaited(_listen(server, apk, token, onError));
     return ApkServer._(server, uri);
   }
 
-  static Future<void> _listen(HttpServer server, File apk, String token) async {
+  static Future<void> _listen(
+    HttpServer server,
+    File apk,
+    String token,
+    void Function(Object error)? onError,
+  ) async {
     await for (final HttpRequest request in server) {
-      // **合わなければ 404。** 403 にすると「そこにある」と教えてしまう
-      // （設計 §4.2(b) と揃える）。
-      if (request.uri.path != '/apk' ||
-          !constantTimeEquals(request.uri.queryParameters['t'] ?? '', token)) {
-        request.response.statusCode = HttpStatus.notFound;
-        await request.response.close();
-        continue;
-      }
-
-      request.response
-        ..headers.set(HttpHeaders.contentTypeHeader, contentType)
-        ..headers.set(HttpHeaders.contentLengthHeader, '${apk.lengthSync()}')
-        ..headers.set(
-          'content-disposition',
-          'attachment; filename="preview.apk"',
-        );
+      // **1件ぶんを丸ごと囲む。** `close()` も切断で投げる。ここから
+      // 抜けると受付ごと終わり、以後どのリクエストにも応えられなくなる。
       try {
-        // 丸ごと読み込まない。150MB を超えることがある。
-        await request.response.addStream(apk.openRead());
-      } on Object {
-        // 端末側が途中で切っただけ。配信を止めない。
+        await _respond(request, apk, token);
+      } on Object catch (error) {
+        // 多くは端末側が途中で切っただけ。**握り潰さない。**
+        // 気づけないと「なぜか落ちてこない」で終わる。
+        onError?.call(error);
+
+        // **閉じてから次へ行く。** 開いたままだと、相手は来ない応答を
+        // 待ち続ける。既に切れていれば、この close も投げる。
+        try {
+          await request.response.close();
+        } on Object {
+          // 相手が居ない。これ以上できることは無い。
+        }
       }
-      await request.response.close();
     }
+  }
+
+  static Future<void> _respond(
+    HttpRequest request,
+    File apk,
+    String token,
+  ) async {
+    // **合わなければ 404。** 403 にすると「そこにある」と教えてしまう
+    // （設計 §4.2(b) と揃える）。
+    if (request.uri.path != '/apk' ||
+        !constantTimeEquals(request.uri.queryParameters['t'] ?? '', token)) {
+      request.response.statusCode = HttpStatus.notFound;
+      await request.response.close();
+      return;
+    }
+
+    request.response
+      ..headers.set(HttpHeaders.contentTypeHeader, contentType)
+      ..headers.set(HttpHeaders.contentLengthHeader, '${apk.lengthSync()}')
+      ..headers.set(
+        'content-disposition',
+        'attachment; filename="preview.apk"',
+      );
+
+    // 丸ごと読み込まない。150MB を超えることがある。
+    await request.response.addStream(apk.openRead());
+    await request.response.close();
   }
 
   Future<void> close() => _server.close(force: true);
