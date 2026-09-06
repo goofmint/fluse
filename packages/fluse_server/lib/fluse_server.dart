@@ -28,6 +28,7 @@ export 'src/server_contracts.dart';
 export 'src/server_runtime.dart';
 export 'src/session_contracts.dart';
 export 'src/session_manager.dart';
+export 'src/timing_report.dart';
 export 'src/tunnel_channel.dart';
 export 'src/tunnel_endpoint.dart';
 export 'src/vm_service_client.dart';

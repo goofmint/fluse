@@ -53,6 +53,15 @@ void main() {
   late Directory temp;
   late String projectRoot;
 
+  /// 段別の所要時間。**目標との比較は既定では失敗条件にしない。**
+  /// ここで取れるのはデスクトップ経路の数字で、実機とは違う（設計 §8.1 の
+  /// 目標は実機に対するもの）。回帰を見るために残す。
+  final TimingReport timings = TimingReport();
+
+  /// `FLUSE_L3_ASSERT_TIMING=1` で目標との比較を失敗条件にする。
+  final bool assertTiming =
+      Platform.environment['FLUSE_L3_ASSERT_TIMING'] == '1';
+
   String? skipReason;
   FlutterSdk? sdk;
   FlutterRunHarness? harness;
@@ -216,6 +225,13 @@ void main() {
   });
 
   tearDownAll(() async {
+    if (timings.cycles > 0) {
+      // **画面に出す。** ログに埋めると CI の出力に残らず、遅くなった
+      // 時にいつからかを追えない。
+      // ignore: avoid_print
+      print('\n== L3 反映経路の所要時間 ==\n${timings.render()}');
+    }
+
     // 1つ失敗しても残りは続ける。DevFS を残すとアプリ側にゴミが溜まり、
     // frontend_server と flutter run を残すとプロセスが居座る。
     await _quietly(() => devFS?.destroy());
@@ -236,6 +252,19 @@ void main() {
       return null;
     }
     return orchestrator;
+  }
+
+  /// 1サイクル分を記録する。opt-in の時だけ目標との比較で落とす。
+  void record(HotReloadResult result) {
+    timings.add(result.timings);
+    if (!assertTiming) {
+      return;
+    }
+    for (final TimingVerdict verdict in timings.verdicts) {
+      if (verdict.met == false) {
+        fail('設計 §8.1 の目標に届いていません: $verdict');
+      }
+    }
   }
 
   test('Dart の変更が反映まで通る', () async {
@@ -269,6 +298,8 @@ void main() {
       contains(HotReloadOrchestrator.stageReassemble),
     );
     expect(reload.unapplied, isEmpty, reason: '入ったなら持ち越しは残らない');
+
+    record(result);
   });
 
   test('asset の変更が evict まで通る', () async {
@@ -306,6 +337,8 @@ void main() {
       result.timings.keys,
       contains(HotReloadOrchestrator.stageReassemble),
     );
+
+    record(result);
   });
 }
 

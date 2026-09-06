@@ -27,7 +27,8 @@ Future<int> main(List<String> args) async {
   if (vmServiceUri == null || projectRoot == null) {
     stderr.writeln(
       '使い方: dart run tool/spike_hot_reload.dart '
-      '--vm-service <URI> --project <パス> [--scheme package|filesystem]',
+      '--vm-service <URI> --project <パス> [--scheme package|filesystem] '
+      '[--cycles <n>] [--warmup <n>] [--report <パス>]',
     );
     return 64;
   }
@@ -36,6 +37,12 @@ Future<int> main(List<String> args) async {
   // flutter build apk が生成する kernel は package: URI を使っている。
   // どちらで通るかをこのスパイクで確かめるため切り替えられるようにする。
   final bool useFilesystemScheme = options['scheme'] != 'package';
+
+  // 何回回すか。**既定は1回。** これまでの使い方（1回だけ回して
+  // 反映されるかを見る）を変えない。
+  final int cycles = _positiveInt(options['cycles'], 'cycles', 1);
+  // 捨てる回数。初回は VM のキャッシュが冷えていて他より遅い。
+  final int warmup = _positiveInt(options['warmup'], 'warmup', 0);
 
   // `--asset` はプロジェクト配下に限る。絶対パスや `..` をそのまま
   // 受け取ると、プロジェクト外のファイルを端末へ送れてしまう。
@@ -76,6 +83,9 @@ Future<int> main(List<String> args) async {
       assetPath: assetPath,
       onCompiler: (CompilerService c) => compiler = c,
       onDevFS: (DevFSClient d) => devFS = d,
+      cycles: cycles,
+      warmup: warmup,
+      reportPath: options['report'],
     );
   } on Object catch (error, stackTrace) {
     exitCode = 70;
@@ -123,6 +133,9 @@ Future<int> _run({
   required String? assetPath,
   required void Function(CompilerService) onCompiler,
   required void Function(DevFSClient) onDevFS,
+  required int cycles,
+  required int warmup,
+  required String? reportPath,
 }) async {
   final String isolateId = await vmService.findMainIsolateId();
   stdout.writeln('  isolate: $isolateId');
@@ -268,24 +281,62 @@ Future<int> _run({
   );
 
   stdout.writeln('== 差分サイクルを回す ==');
-  final Stopwatch cycle = Stopwatch()..start();
-  final HotReloadResult result = await orchestrator.reload(
-    invalidated: <Uri>[mainUri],
-    changedAssets: changedAssets,
-  );
-  cycle.stop();
+  final TimingReport report = TimingReport();
+  final File mainFile = File(p.join(projectRoot, 'lib', 'main.dart'));
+  HotReloadResult? last;
 
-  stdout.writeln('  status=${result.status}');
-  stdout.writeln('  timings=${result.timings}');
-  stdout.writeln('  total=${cycle.elapsedMilliseconds}ms');
-  for (final String notice in result.notices) {
-    stdout.writeln('  notice: $notice');
-  }
-  for (final DiagnosticEntry d in result.diagnostics) {
-    stdout.writeln('  ${d.raw}');
+  // **1回では測れない。** 初回は VM 側のキャッシュが冷えていて他より
+  // 遅く、1回だけ見ると実態より悪い数字になる。捨てる回数を分けて数える。
+  for (int i = 0; i < warmup + cycles; i++) {
+    final bool measured = i >= warmup;
+    if (i > 0) {
+      // **毎回中身を変える。** 同じ内容だと差分が空になり、
+      // 「速い」のではなく「何もしていない」時間を測ることになる。
+      mainFile.writeAsStringSync(
+        '${mainFile.readAsStringSync()}\n// fluse spike $i\n',
+      );
+    }
+
+    final Stopwatch cycle = Stopwatch()..start();
+    final HotReloadResult result = await orchestrator.reload(
+      invalidated: <Uri>[mainUri],
+      // asset は初回だけ送る。毎回同じ内容を送っても差分にならない。
+      changedAssets: i == 0 ? changedAssets : const <ChangedAsset>[],
+    );
+    cycle.stop();
+    last = result;
+
+    stdout.writeln(
+      '  [${i + 1}/${warmup + cycles}]'
+      '${measured ? '' : '（捨てる）'} '
+      'status=${result.status} timings=${result.timings} '
+      'total=${cycle.elapsedMilliseconds}ms',
+    );
+    for (final String notice in result.notices) {
+      stdout.writeln('  notice: $notice');
+    }
+    for (final DiagnosticEntry d in result.diagnostics) {
+      stdout.writeln('  ${d.raw}');
+    }
+    if (!result.isSuccess) {
+      // **測り続けない。** 失敗したサイクルの時間には意味が無い。
+      return 1;
+    }
+    if (measured) {
+      report.add(result.timings);
+    }
   }
 
-  return result.isSuccess ? 0 : 1;
+  if (report.cycles > 0) {
+    stdout.writeln();
+    stdout.writeln(report.render());
+    if (reportPath != null) {
+      File(reportPath).writeAsStringSync('${report.toJsonString()}\n');
+      stdout.writeln('  レポート: $reportPath');
+    }
+  }
+
+  return last != null && last.isSuccess ? 0 : 1;
 }
 
 /// `--asset` をプロジェクト配下の相対パスに限定する。
@@ -321,6 +372,21 @@ String? _validateAssetPath(String? assetPath, String projectRoot) {
   // 呼び出し側は `File(p.join(projectRoot, assetPath))` で開くので、
   // 元の projectRoot からの相対で返す。
   return p.relative(candidate, from: projectRoot);
+}
+
+/// 0 以上の整数として読む。読めなければ投げる。
+///
+/// **黙って既定値へ倒さない。** `--cycles abc` を1回として扱うと、
+/// 20回測ったつもりの数字が1回分になる。
+int _positiveInt(String? raw, String name, int fallback) {
+  if (raw == null) {
+    return fallback;
+  }
+  final int? parsed = int.tryParse(raw);
+  if (parsed == null || parsed < 0) {
+    throw ArgumentError.value(raw, '--$name', '0 以上の整数で指定してください');
+  }
+  return parsed;
 }
 
 /// 解放処理を、失敗しても他の解放を止めないように包む。
