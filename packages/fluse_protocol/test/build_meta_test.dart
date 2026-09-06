@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:fluse_server/fluse_server.dart';
+import 'package:fluse_protocol/fluse_protocol.dart';
 import 'package:test/test.dart';
 
 /// Flutter 3.41.9 の `flutter build apk --debug --verbose` から採った実物。

@@ -10,6 +10,8 @@ environment:
 resolution: workspace
 
 dependencies:
+  # 通信契約と、ビルド時フラグの記録（設計 §2.1 のレイヤリング）。
+  fluse_protocol: ^0.1.0
   # 指紋の sha256。自前で実装しない。
   crypto: ^3.0.6
   # パス結合。Windows の区切りを正しく扱うため自前の文字列結合は使わない。
