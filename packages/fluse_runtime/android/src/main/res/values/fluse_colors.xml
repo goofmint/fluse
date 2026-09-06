@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 利用者のアプリのテーマに関係なく読めるよう、自前で色を持つ。 -->
+<resources>
+    <color name="fluse_background">#FF121212</color>
+    <color name="fluse_text">#FFFFFFFF</color>
+</resources>
