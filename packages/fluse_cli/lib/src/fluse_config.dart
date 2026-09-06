@@ -36,6 +36,12 @@ final class FluseConfig {
   /// APK を配るか。
   static const bool defaultServeApk = true;
 
+  /// ポートの下限。
+  static const int minPort = 0;
+
+  /// ポートの上限。
+  static const int maxPort = 65535;
+
   /// ポートを差し替える環境変数（設計 §9.2）。
   static const String portVariable = 'FLUSE_PORT';
 
@@ -109,7 +115,10 @@ final class FluseConfig {
 
     return FluseConfig(
       version: version,
-      port: _optionalInt(document, 'port', path) ?? defaultPort,
+      port: switch (_optionalInt(document, 'port', path)) {
+        final int value => validatePort(value, 'port', path: path),
+        null => defaultPort,
+      },
       target: _optionalString(document, 'target', path) ?? defaultTarget,
       applicationIdSuffix: _optionalString(
         document,
@@ -151,7 +160,9 @@ final class FluseConfig {
     return FluseConfig(
       version: file.version,
       port: resolveValue<int>(
-        argument: portArgument,
+        argument: portArgument == null
+            ? null
+            : validatePort(portArgument, '--port'),
         environment: portFromEnvironment(env),
         file: file.port,
         fallback: defaultPort,
@@ -181,11 +192,26 @@ final class FluseConfig {
       return null;
     }
     final int? parsed = int.tryParse(raw.trim());
-    if (parsed == null || parsed < 0 || parsed > 65535) {
+    if (parsed == null) {
       // **黙って既定値へ倒さない。** 指定したのに効かない理由が分からない。
       throw FluseConfigException('$portVariable が正しくありません: $raw');
     }
-    return parsed;
+    return validatePort(parsed, portVariable);
+  }
+
+  /// ポートの範囲を見る。
+  ///
+  /// **どの経路から来ても同じ所で見る。** 片方だけ見ていると、
+  /// `fluse.yaml` に書いた 70000 が bind の失敗として表面化し、
+  /// 設定の誤りだと気づけない。
+  static int validatePort(int value, String source, {String? path}) {
+    if (value < minPort || value > maxPort) {
+      throw FluseConfigException(
+        '$source が正しくありません: $value（$minPort〜$maxPort）',
+        path: path,
+      );
+    }
+    return value;
   }
 
   // ---------------------------------------------------------------- 書き込み

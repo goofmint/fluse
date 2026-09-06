@@ -11,14 +11,12 @@ import 'package:fluse_server/fluse_server.dart';
 Future<void> main(List<String> arguments) async {
   final FluseCommandRunner runner = FluseCommandRunner(version: fluseVersion);
 
-  final bool verbose =
-      arguments.contains('--verbose') || arguments.contains('-v');
-
   final int code;
   try {
     code = await runner.run(
       arguments,
-      contextFor: (FluseCommand command) => buildContext(verbose: verbose),
+      contextFor: (FluseCommand command, FluseGlobalOptions options) =>
+          buildContext(options),
     );
   } on Object catch (error) {
     // **握り潰さない。** 何が起きたか分からないまま 0 で終わらせない。
@@ -35,14 +33,19 @@ const String fluseVersion = '0.1.0';
 ///
 /// SDK の解決も設定の読み込みも失敗しうる。**コマンドが決まってから**
 /// 行うことで、`--version` や `--help` が環境に左右されないようにする。
-Future<FluseContext> buildContext({required bool verbose}) async {
+Future<FluseContext> buildContext(FluseGlobalOptions options) async {
   final Directory projectRoot = Directory.current;
   return FluseContext.of(
     projectRoot: projectRoot,
     config: FluseConfig.resolve(projectRoot: projectRoot),
-    sdk: await FlutterSdk.resolve(),
+    // **指定された場所を使う。** 受け取っておきながら PATH の SDK で
+    // ビルドすると、版が違う理由に辿り着けない。
+    sdk: await FlutterSdk.resolve(explicitRoot: options.flutterSdk),
     // **ファイルには常に残す。** 後から「あのとき何が起きたか」を追う
     // のがログの主目的で、コンソールへの表示は副次的（設計 §5.2）。
-    logger: openProjectLogger(projectRoot: projectRoot.path, verbose: verbose),
+    logger: openProjectLogger(
+      projectRoot: projectRoot.path,
+      verbose: options.verbose,
+    ),
   );
 }

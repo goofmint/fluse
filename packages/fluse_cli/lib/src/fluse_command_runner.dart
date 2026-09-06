@@ -68,9 +68,17 @@ final class FluseCommandRunner {
   /// [contextFor] は選ばれたコマンドに渡す [FluseContext] を作る。
   /// **ここでは作らない。** SDK の解決も設定の読み込みも失敗しうるうえ、
   /// `doctor` のように失敗しても続けたいコマンドがある。
+  ///
+  /// [contextFor] には共通のオプション（[FluseGlobalOptions]）も渡す。
+  /// **捨ててはいけない。** `--flutter-sdk` を解析だけして使わないと、
+  /// 指定した SDK ではない方でビルドしてしまう。
   Future<int> run(
     List<String> arguments, {
-    required Future<FluseContext> Function(FluseCommand command) contextFor,
+    required Future<FluseContext> Function(
+      FluseCommand command,
+      FluseGlobalOptions options,
+    )
+    contextFor,
     void Function(String line) onOutput = print,
     void Function(String line) onError = _printError,
   }) async {
@@ -117,7 +125,10 @@ final class FluseCommandRunner {
       return 0;
     }
 
-    return command.run(sub, await contextFor(command));
+    return command.run(
+      sub,
+      await contextFor(command, FluseGlobalOptions.from(results)),
+    );
   }
 
   /// 全体の使い方。
@@ -148,4 +159,31 @@ ${command.argParser.usage}''';
   /// **標準出力へ混ぜない。** 失敗の知らせをパイプの先へ流すと、
   /// 出力を機械で読んでいる側が壊れる。
   static void _printError(String line) => stderr.writeln(line);
+}
+
+/// 全コマンドに共通のオプション（設計 §2.2.4）。
+///
+/// **解析しただけで終わらせない。** `--flutter-sdk` を受け取っておきながら
+/// 使わないと、指定した SDK ではない方でビルドすることになる。
+final class FluseGlobalOptions {
+  const FluseGlobalOptions({this.flutterSdk, this.verbose = false});
+
+  /// `--flutter-sdk`。指定が無ければ null。
+  final String? flutterSdk;
+
+  /// `--verbose`。
+  final bool verbose;
+
+  /// ルートの解析結果から取り出す。
+  static FluseGlobalOptions from(ArgResults results) {
+    final Object? sdk = results['flutter-sdk'];
+    return FluseGlobalOptions(
+      flutterSdk: sdk is String && sdk.isNotEmpty ? sdk : null,
+      verbose: results['verbose'] == true,
+    );
+  }
+
+  @override
+  String toString() =>
+      'FluseGlobalOptions(flutterSdk: $flutterSdk, verbose: $verbose)';
 }

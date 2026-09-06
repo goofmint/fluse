@@ -1,3 +1,5 @@
+import 'fluse_config.dart';
+
 /// `fluse.yaml` を読み書きできなかったときに投げる例外。
 ///
 /// **黙って既定値へ倒さない。** 書いた設定が効いていないことに気づけず、
@@ -17,6 +19,11 @@ final class FluseConfigException implements Exception {
     if (path != null) {
       buffer.write('\n  対象: $path');
     }
+    // **次に何をすればよいかまで書く。** 何が違うかだけでは直せない。
+    buffer.write(
+      '\n\n  ${FluseConfig.fileName} か、指定した値を直してから実行し直してください。'
+      '\n  `fluse doctor` で環境を確認できます。',
+    );
     return buffer.toString();
   }
 }

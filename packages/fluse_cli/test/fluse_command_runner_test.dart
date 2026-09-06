@@ -29,10 +29,16 @@ void main() {
     logger: FluseLogger(sinks: const <FluseLogSink>[]),
   );
 
+  /// 最後に渡された共通のオプション。
+  FluseGlobalOptions? seen;
+
   Future<int> run(FluseCommandRunner runner, List<String> arguments) =>
       runner.run(
         arguments,
-        contextFor: (FluseCommand _) async => context(),
+        contextFor: (FluseCommand _, FluseGlobalOptions options) async {
+          seen = options;
+          return context();
+        },
         onOutput: output.add,
         onError: errors.add,
       );
@@ -74,6 +80,34 @@ void main() {
       expect(command.lastArgs?['target'], 'lib/other.dart');
     });
 
+    test('--flutter-sdk を文脈の組み立てまで渡す', () async {
+      // 受け取っておきながら PATH の SDK でビルドすると、版が違う理由に
+      // 辿り着けない。
+      await run(runnerWith(<FluseCommand>[_Recording()]), <String>[
+        '--flutter-sdk',
+        '/opt/other-flutter',
+        'demo',
+      ]);
+
+      expect(seen?.flutterSdk, '/opt/other-flutter');
+    });
+
+    test('--verbose も渡す', () async {
+      await run(runnerWith(<FluseCommand>[_Recording()]), <String>[
+        '--verbose',
+        'demo',
+      ]);
+
+      expect(seen?.verbose, isTrue);
+    });
+
+    test('指定が無ければ null', () async {
+      await run(runnerWith(<FluseCommand>[_Recording()]), <String>['demo']);
+
+      expect(seen?.flutterSdk, isNull);
+      expect(seen?.verbose, isFalse);
+    });
+
     test('文脈はコマンドが決まってから作る', () async {
       // SDK の解決も設定の読み込みも失敗しうる。使わないなら触らない。
       final FluseCommandRunner runner = runnerWith(<FluseCommand>[]);
@@ -81,7 +115,7 @@ void main() {
 
       await runner.run(
         <String>['--version'],
-        contextFor: (FluseCommand _) async {
+        contextFor: (FluseCommand _, FluseGlobalOptions _) async {
           built = true;
           return context();
         },

@@ -235,7 +235,54 @@ serveApk: false
     });
 
     test('範囲の外の環境変数も弾く', () {
-      expect(() => resolve(environment: '70000'), throwsA(isA<Object>()));
+      expect(
+        () => resolve(environment: '70000'),
+        throwsA(
+          isA<FluseConfigException>().having(
+            (FluseConfigException e) => e.toString(),
+            'toString',
+            contains(FluseConfig.portVariable),
+          ),
+        ),
+      );
+    });
+
+    test('fluse.yaml のポートも範囲を見る', () {
+      // 片方だけ見ていると、bind の失敗として表面化して原因が分からない。
+      writeConfig('port: 70000\n');
+
+      expect(
+        () => FluseConfig.readFrom(temp),
+        throwsA(
+          isA<FluseConfigException>().having(
+            (FluseConfigException e) => e.toString(),
+            'toString',
+            contains('port'),
+          ),
+        ),
+      );
+    });
+
+    test('引数のポートも範囲を見る', () {
+      expect(
+        () => resolve(argument: 70000),
+        throwsA(isA<FluseConfigException>()),
+      );
+      expect(() => resolve(argument: -1), throwsA(isA<FluseConfigException>()));
+    });
+
+    test('失敗の文言に次の手を書く', () {
+      // 何が違うかだけでは直せない。
+      expect(
+        () => resolve(environment: '70000'),
+        throwsA(
+          isA<FluseConfigException>().having(
+            (FluseConfigException e) => e.toString(),
+            'toString',
+            allOf(contains(FluseConfig.fileName), contains('doctor')),
+          ),
+        ),
+      );
     });
 
     test('target と serveApk も同じ順序で決まる', () {
