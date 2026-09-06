@@ -207,7 +207,11 @@ final class FlutterRunHarness {
   /// ためだけに `yaml_edit` を依存へ足したくないため、`path:` の行だけを
   /// 見る。値は引用符で囲む。空白を含むパスでも壊れないようにするため。
   static String absolutePathDependencies(String pubspec, String from) {
-    final RegExp line = RegExp(r"""^(\s*path:\s*)(['"]?)([^'"#\n]+)\2\s*$""");
+    // 行末のコメントも拾う。**捨ててはいけない。** 一致しないまま
+    // 相対のまま残ると、写した先で pub の解決が落ちる。
+    final RegExp line = RegExp(
+      r"""^(\s*path:\s*)(['"]?)([^'"#\n]+)\2(\s*(?:#.*)?)$""",
+    );
     return pubspec
         .split('\n')
         .map((String text) {
@@ -215,11 +219,21 @@ final class FlutterRunHarness {
           if (match == null) {
             return text;
           }
-          final String value = match.group(3)!.trim();
+          final String? captured = match.group(3);
+          if (captured == null) {
+            // 正規表現の形からは起きない。起きたら黙って通さない。
+            throw StateError('path の値を取り出せません: $text');
+          }
+          final String value = captured.trim();
           if (p.isAbsolute(value)) {
             return text;
           }
-          return '${match.group(1)}"${p.normalize(p.join(from, value))}"';
+          final String absolute = p.normalize(p.join(from, value));
+          // **コメントの前に空白を1つ置く。** YAML は `"値"# コメント`
+          // を読めない。値の側で空白を食っているので、ここで戻す。
+          final String comment = (match.group(4) ?? '').trimLeft();
+          final String suffix = comment.isEmpty ? '' : ' $comment';
+          return '${match.group(1)}"$absolute"$suffix';
         })
         .join('\n');
   }

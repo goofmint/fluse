@@ -54,6 +54,15 @@ dev_dependencies:
       );
     });
 
+    test('行末のコメントを残す', () {
+      const String pubspec = '    path: ../pkg # ランタイム\n';
+
+      expect(
+        FlutterRunHarness.absolutePathDependencies(pubspec, '/repo/app'),
+        '    path: "/repo/pkg" # ランタイム\n',
+      );
+    });
+
     test('絶対はそのまま', () {
       const String pubspec = '    path: /already/absolute\n';
 
