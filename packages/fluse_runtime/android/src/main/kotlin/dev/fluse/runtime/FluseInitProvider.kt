@@ -58,6 +58,11 @@ class FluseInitProvider : ContentProvider() {
             return true
         }
 
+        // **エラー表示は Dart より先に立てる。** コンパイルが通らなければ
+        // Dart isolate は起動せず、Flutter 側からは何も描けない（設計 §5.2）。
+        application.registerActivityLifecycleCallbacks(FluseForeground)
+        FluseSurfaces.start()
+
         val callbacks = FluseActivityLifecycle(application)
         application.registerActivityLifecycleCallbacks(callbacks)
         lifecycle = callbacks
@@ -245,7 +250,11 @@ internal class ConnectingStartupHandler(
     ) {
         val connection =
             try {
-                FluseConnection.getOrCreate(activity.application, store)
+                FluseConnection.getOrCreate(activity.application, store).also {
+                    // 赤画面とバッジもこの接続を見る。ここで繋がないと、
+                    // 再接続の道から入った時だけ何も出なくなる。
+                    FluseSurfaces.listenTo(it)
+                }
             } catch (e: Exception) {
                 // **握り潰さない。** assets の素性が無ければ `hello` を
                 // 組み立てられず、プレビューは成立しない。ただしアプリ自体は

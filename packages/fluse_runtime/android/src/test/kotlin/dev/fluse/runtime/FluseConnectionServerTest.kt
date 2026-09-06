@@ -65,7 +65,7 @@ internal class FluseConnectionServerTest {
                 socketFactory = OkHttpFluseSocketFactory(client),
                 scheduler = scheduler,
             )
-        connection.listener = listener
+        connection.addListener(listener)
     }
 
     @AfterTest
