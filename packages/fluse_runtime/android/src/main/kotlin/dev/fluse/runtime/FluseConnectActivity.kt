@@ -302,6 +302,14 @@ class FluseConnectActivity :
 
     override fun onNeedsPairing(reason: String) = failed(getString(R.string.fluse_error_auth))
 
+    override fun onCleartextBlocked(
+        host: String,
+        message: String,
+    ) {
+        // **そのまま出す。** 直し方まで書いてあるので、丸めると意味が無い。
+        failed(message)
+    }
+
     override fun onDisconnected() {
         // **受理される前の切断は失敗。** ここで戻さないと connecting が
         // 立ったままになり、やり直せなくなる。受理後の切断は
