@@ -10,8 +10,8 @@ import io.flutter.plugin.common.MethodChannel.Result
 /**
  * 端末側ランタイムの入口（設計 §2.2.5）。
  *
- * 今は Dart 側から VM Service の URI を受け取るだけ。WebSocket 接続・
- * トンネル・エラーオーバーレイは Task 4.2 以降で足す。
+ * Dart 側から VM Service の URI を受け取り、[FluseConnection] へ渡す。
+ * トンネルとエラーオーバーレイは後続タスクで足す。
  */
 class FluseRuntimePlugin :
     FlutterPlugin,
@@ -130,6 +130,11 @@ class FluseRuntimePlugin :
         // main() が作り直されるため。上書きで冪等に受ける。
         vmServiceUri = uri
         Log.i(TAG, "VM Service を受け取りました: ${maskAuthCode(uri)}")
+
+        // 接続がまだ無いこともある。`flusePreviewMain` はアプリの起動と
+        // 並行に走るため、`accept` より先に来る。その場合は
+        // FluseConnection が受理した時点で自分で送る。
+        FluseConnection.instance?.vmServiceReady(uri)
         result.success(null)
     }
 }

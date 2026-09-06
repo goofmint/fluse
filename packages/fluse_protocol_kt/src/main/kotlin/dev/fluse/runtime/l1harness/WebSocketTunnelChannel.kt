@@ -17,11 +17,11 @@ import kotlinx.coroutines.sync.withLock
 /**
  * 実 WebSocket を [TunnelChannel] に見せる実装。**L1統合テスト専用**（Task 2.5）。
  *
- * 本番の端末側 WebSocket は `FluseConnection`（Task 4.3）が所有する。ここは
- * それが出来上がるまでの間、`TunnelEndpoint`(Dart) ⇄ [dev.fluse.runtime.FluseTunnel]
- * を**実 WebSocket 越しに**繋いで検証するためだけに存在する。
+ * 本番の端末側 WebSocket は `FluseConnection` が所有する。ここは
+ * `TunnelEndpoint`(Dart) ⇄ [dev.fluse.runtime.FluseTunnel] を
+ * **実 WebSocket 越しに**繋いで検証するためだけに存在する。
  *
- * **Task 4.1 でこのパッケージを Android プラグインへ移してはいけない。**
+ * **このパッケージを Android プラグインへ移してはいけない。**
  * `java.net.http` は Android のクラスライブラリに無く、移すと実行時に落ちる。
  */
 class WebSocketTunnelChannel(

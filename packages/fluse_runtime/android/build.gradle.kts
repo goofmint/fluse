@@ -27,8 +27,8 @@ plugins {
 }
 
 android {
-    // fluse_protocol_kt と同じ package 名に揃える。Task 4.3 以降で
-    // FluseTunnel をここへ移すときに、package を書き換えずに済ませる。
+    // ワイヤ実装（`src/wire`）と同じ package 名。Task 4.3 で
+    // fluse_protocol_kt から移した際、package を書き換えずに済ませた。
     namespace = "dev.fluse.runtime"
 
     compileSdk = 36
@@ -44,7 +44,11 @@ android {
 
     sourceSets {
         getByName("main") {
-            java.srcDirs("src/main/kotlin")
+            // `src/wire` はワイヤ実装（設計 §2.2.1）。Android SDK に触らず、
+            // `fluse_protocol_kt` が JVM 上のゴールデン突合と L1統合テストの
+            // ハーネスから同じファイルを見に行く。**コピーは作らないこと。**
+            // 二重管理になると、片方だけ直った状態を検知できない。
+            java.srcDirs("src/main/kotlin", "src/wire/kotlin")
         }
         getByName("test") {
             java.srcDirs("src/test/kotlin")
@@ -59,6 +63,11 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+
+            // **`android.util.Log` はスタブしか無い。** 既定では呼ぶだけで
+            // 「not mocked」を投げるため、ログを出す経路が単体テストで
+            // 通せない。戻り値は使っていないので既定値で構わない。
+            isReturnDefaultValues = true
             all {
                 it.useJUnitPlatform()
 
@@ -78,6 +87,21 @@ dependencies {
     // （設計 §6.1）。端末を取られたときに残るのは暗号文になる。
     implementation("androidx.security:security-crypto:1.1.0")
 
+    // **Android に `java.net.http` は無い。** `l1harness` の
+    // WebSocketTunnelChannel をここへ持って来られないのはそのため。
+    // 端末側の WebSocket は OkHttp で張る。MockWebServer が同じ供給元に
+    // あり、完了条件の「モックWebSocketサーバ」をそのまま満たせる。
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // FluseTunnel は streamId ごとに coroutine を立てて双方向にコピーする。
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.0.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+
+    // **`org.json` は android.jar にスタブしか無い。** 単体テストで呼ぶと
+    // 「not mocked」で落ちるため、テスト時だけ本物を載せる。
+    testImplementation("org.json:json:20240303")
 }

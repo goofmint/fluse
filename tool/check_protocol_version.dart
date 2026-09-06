@@ -12,8 +12,11 @@ import 'dart:io';
 
 /// 検査対象。パスはリポジトリルートからの相対。
 const _dartSource = 'packages/fluse_protocol/lib/src/protocol_version.dart';
+// Kotlin のワイヤ実装は Task 4.3 でプラグイン側へ移した。fluse_runtime は
+// pub.dev へ公開する単位で、自分のディレクトリの外を参照したままでは
+// 配布物が成立しないため。fluse_protocol_kt は srcDir でここを借りている。
 const _kotlinSource =
-    'packages/fluse_protocol_kt/src/main/kotlin/dev/fluse/protocol/ProtocolVersion.kt';
+    'packages/fluse_runtime/android/src/wire/kotlin/dev/fluse/protocol/ProtocolVersion.kt';
 const _goldenSource = 'packages/fluse_protocol/test/fixtures/wire_golden.json';
 
 /// `const int fluseProtocolVersion = 1;`
