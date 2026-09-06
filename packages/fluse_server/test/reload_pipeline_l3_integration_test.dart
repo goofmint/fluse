@@ -47,6 +47,15 @@ void main() {
   /// DevFS 上の dill の名前。flutter_tools と同じ約束。
   const String dillName = 'main.dart.incremental.dill';
 
+  /// 分布を見るために回す回数。
+  ///
+  /// **1〜2回では p95 を語れない。** 標本が少ないと p95 は実質「最大値」
+  /// になり、たまたま跳ねた1回で未達と判じることになる。
+  const int measuredCycles = 20;
+
+  /// 捨てる回数。初回は VM のキャッシュが冷えていて他より遅い。
+  const int warmupCycles = 3;
+
   /// 変更を起こす asset。`pubspec.yaml` で宣言済みのものを使う。
   const String assetPath = 'assets/images/fluse_logo.png';
 
@@ -300,6 +309,37 @@ void main() {
     expect(reload.unapplied, isEmpty, reason: '入ったなら持ち越しは残らない');
 
     record(result);
+  });
+
+  test('反映を繰り返して所要時間を測る', () async {
+    final HotReloadOrchestrator? reload = ensureReady();
+    if (reload == null) {
+      return;
+    }
+
+    final File mainFile = File(p.join(projectRoot, 'lib', 'main.dart'));
+    for (int i = 0; i < warmupCycles + measuredCycles; i++) {
+      // **毎回中身を変える。** 同じ内容だと差分が空になり、「速い」
+      // のではなく「何もしていない」時間を測ることになる。
+      mainFile.writeAsStringSync(
+        "${mainFile.readAsStringSync()}\nString fluseCycle$i() => '$i';\n",
+      );
+
+      final HotReloadResult result = await reload.reload(
+        invalidated: <Uri>[_mainUri],
+      );
+
+      expect(
+        result.status,
+        HotReloadStatus.success,
+        reason: '${i + 1}周目: ${result.summary}',
+      );
+      // **最初の数回は捨てる。** VM 側のキャッシュが冷えている間の
+      // 数字を混ぜると、実態より悪い分布になる。
+      if (i >= warmupCycles) {
+        record(result);
+      }
+    }
   });
 
   test('asset の変更が evict まで通る', () async {
