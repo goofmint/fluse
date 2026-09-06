@@ -4,6 +4,10 @@
 /// エントリポイントだけを差し替える方針を実装する。
 library;
 
+export 'src/android_device.dart';
+export 'src/apk_server.dart';
+export 'src/device_install_exception.dart';
+export 'src/device_installer.dart';
 export 'src/entrypoint_generator.dart';
 export 'src/fingerprint.dart';
 export 'src/fingerprint_exception.dart';
