@@ -1,6 +1,7 @@
 package dev.fluse.runtime
 
 import dev.fluse.protocol.FLUSE_PROTOCOL_VERSION
+import java.security.SecureRandom
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -15,9 +16,19 @@ internal class FluseConnectUriTest {
             appVersion = "fedcba9876543210",
         )
 
+    /**
+     * テスト用のトークン。
+     *
+     * **リテラルで書かない。** ダミーであっても、資格情報の形をした
+     * 文字列がリポジトリに残ると本物と見分けが付かない。
+     */
+    private val token: String =
+        ByteArray(16).also { SecureRandom().nextBytes(it) }
+            .joinToString("") { "%02x".format(it) }
+
     private val valid =
         "fluse://connect?v=1&h=192.168.0.10&p=8180" +
-            "&pid=0123456789abcdef&t=token-value&rev=00b0c91f"
+            "&pid=0123456789abcdef&t=$token&rev=00b0c91f"
 
     private fun accepted(raw: String): FluseConnectRequest {
         val result = FluseConnectUri.parse(raw)
@@ -41,7 +52,7 @@ internal class FluseConnectUriTest {
         assertEquals("192.168.0.10", request.host)
         assertEquals(8180, request.port)
         assertEquals("0123456789abcdef", request.projectId)
-        assertEquals("token-value", request.pairingToken)
+        assertEquals(token, request.pairingToken)
         assertEquals("00b0c91f", request.revision)
         assertEquals(FluseEndpoint("192.168.0.10", 8180), request.endpoint())
     }
@@ -55,7 +66,7 @@ internal class FluseConnectUriTest {
 
     @Test
     fun `必要な値が欠けていたら受け付けない`() {
-        assertEquals(FluseConnectError.MALFORMED, rejected(valid.replace("&t=token-value", "")))
+        assertEquals(FluseConnectError.MALFORMED, rejected(valid.replace("&t=$token", "")))
         assertEquals(FluseConnectError.MALFORMED, rejected(valid.replace("&h=192.168.0.10", "")))
         assertEquals(FluseConnectError.MALFORMED, rejected(valid.replace("&rev=00b0c91f", "")))
     }
@@ -80,7 +91,7 @@ internal class FluseConnectUriTest {
 
     @Test
     fun `percent encode を戻す`() {
-        val request = accepted(valid.replace("t=token-value", "t=a%2Bb%2Fc"))
+        val request = accepted(valid.replace("t=$token", "t=a%2Bb%2Fc"))
 
         assertEquals("a+b/c", request.pairingToken)
     }
@@ -98,7 +109,7 @@ internal class FluseConnectUriTest {
         // 例外文やログに混ざると漏れる。
         val request = accepted(valid)
 
-        assertEquals(false, request.toString().contains("token-value"), request.toString())
+        assertEquals(false, request.toString().contains(token), request.toString())
     }
 
     // ----------------------------------------------------------------- verify
@@ -144,14 +155,14 @@ internal class FluseConnectUriTest {
             FluseConnectUri.fromManualInput(
                 host = " 192.168.0.10 ",
                 port = " 8180 ",
-                token = " token-value ",
+                token = " $token ",
                 appInfo = appInfo,
             )
 
         assertIs<FluseConnectResult.Accepted>(result)
         assertEquals("192.168.0.10", result.request.host)
         assertEquals(8180, result.request.port)
-        assertEquals("token-value", result.request.pairingToken)
+        assertEquals(token, result.request.pairingToken)
         // QR に無い値はこの端末の素性で埋める。突き合わせはサーバが行う。
         assertEquals(appInfo.projectId, result.request.projectId)
         assertEquals("00b0c91f", result.request.revision)
@@ -163,7 +174,7 @@ internal class FluseConnectUriTest {
             FluseConnectUri.fromManualInput(
                 host = "",
                 port = "8180",
-                token = "token-value",
+                token = token,
                 appInfo = appInfo,
             )
 
@@ -172,12 +183,27 @@ internal class FluseConnectUriTest {
     }
 
     @Test
+    fun `空白だけの値は受け付けない`() {
+        // `h=%20` は decode 後も空でない文字列になり、そのまま繋ぎ先へ渡る。
+        assertEquals(FluseConnectError.MALFORMED, rejected(valid.replace("h=192.168.0.10", "h=%20")))
+        assertEquals(FluseConnectError.MALFORMED, rejected(valid.replace("t=$token", "t=%20")))
+    }
+
+    @Test
+    fun `壊れたエスケープは受け付けない`() {
+        // 直して通すと、読み取ったものと繋ぎに行く先が食い違う。
+        assertEquals(FluseConnectError.MALFORMED, rejected(valid.replace("t=$token", "t=%A")))
+        assertEquals(FluseConnectError.MALFORMED, rejected(valid.replace("t=$token", "t=%ZZ")))
+        assertEquals(FluseConnectError.MALFORMED, rejected(valid.replace("t=$token", "t=abc%")))
+    }
+
+    @Test
     fun `手入力のポートが数でなければ受け付けない`() {
         val result =
             FluseConnectUri.fromManualInput(
                 host = "192.168.0.10",
                 port = "八一八〇",
-                token = "token-value",
+                token = token,
                 appInfo = appInfo,
             )
 

@@ -23,5 +23,6 @@
     <string name="fluse_error_too_many">すでに別の端末が繋がっています</string>
     <string name="fluse_error_input">ホスト・ポート・トークンを確認してください</string>
     <string name="fluse_error_no_camera">カメラを使えません。手で入力してください</string>
+    <string name="fluse_error_connect">サーバに繋がりませんでした。ホストとポートを確認してください</string>
     <string name="fluse_error_app_info">Preview App の情報を読めませんでした</string>
 </resources>

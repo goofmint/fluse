@@ -27,8 +27,18 @@ internal class FluseQrAnalyzer(
             setHints(hints)
         }
 
-    /** 一度読めたら止める。同じ QR で何度も繋ぎに行かせない。 */
+    /**
+     * 一度読めたら止める。同じ QR で何度も繋ぎに行かせない。
+     *
+     * **受け入れられなかったら [resume] で戻す。** 別のアプリの QR が
+     * 一度写り込んだだけで、以後まったく読めなくなってしまう。
+     */
     private val done = AtomicBoolean(false)
+
+    /** 受け入れられなかった時に、読み取りを再開する。 */
+    fun resume() {
+        done.set(false)
+    }
 
     override fun analyze(image: ImageProxy) {
         try {

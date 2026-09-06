@@ -75,7 +75,9 @@ object FluseConnectUri {
             return FluseConnectResult.Rejected(FluseConnectError.NOT_FLUSE)
         }
 
-        val query = decodeQuery(text.substringAfter('?'))
+        val query =
+            decodeQuery(text.substringAfter('?'))
+                ?: return FluseConnectResult.Rejected(FluseConnectError.MALFORMED)
         val version = query["v"]?.toIntOrNull()
         val host = query["h"]
         val port = query["p"]?.toIntOrNull()
@@ -83,12 +85,14 @@ object FluseConnectUri {
         val token = query["t"]
         val revision = query["rev"]
 
+        // **空白だけの値も受け付けない。** `h=%20` は decode 後に空でない
+        // 文字列になり、そのまま繋ぎ先として渡ってしまう。
         if (version == null ||
-            host.isNullOrEmpty() ||
+            host.isNullOrBlank() ||
             port == null ||
-            projectId.isNullOrEmpty() ||
-            token.isNullOrEmpty() ||
-            revision.isNullOrEmpty()
+            projectId.isNullOrBlank() ||
+            token.isNullOrBlank() ||
+            revision.isNullOrBlank()
         ) {
             return FluseConnectResult.Rejected(FluseConnectError.MALFORMED)
         }
@@ -174,7 +178,7 @@ object FluseConnectUri {
      * `pairingToken` は base64url（設計 §4.2(a)）で、`%` は現れない。
      * ただし将来の値のために percent-decode は通しておく。
      */
-    private fun decodeQuery(query: String): Map<String, String> {
+    private fun decodeQuery(query: String): Map<String, String>? {
         val result = HashMap<String, String>()
         for (pair in query.split('&')) {
             if (pair.isEmpty()) continue
@@ -183,12 +187,15 @@ object FluseConnectUri {
             val key = pair.substring(0, separator)
             // 同じキーが2度出たら最初を採る。後から上書きさせない。
             if (result.containsKey(key)) continue
-            result[key] = percentDecode(pair.substring(separator + 1))
+            // **壊れたエスケープは通さない。** 直せば別の値になってしまい、
+            // 読み取ったものと繋ぎに行く先が食い違う。
+            result[key] = percentDecode(pair.substring(separator + 1)) ?: return null
         }
         return result
     }
 
-    private fun percentDecode(value: String): String {
+    /** 壊れていれば null。`%A` のような中途半端なエスケープを直さない。 */
+    private fun percentDecode(value: String): String? {
         if (!value.contains('%')) {
             return value
         }
@@ -196,16 +203,17 @@ object FluseConnectUri {
         var i = 0
         while (i < value.length) {
             val c = value[i]
-            if (c == '%' && i + 2 < value.length) {
-                val hex = value.substring(i + 1, i + 3).toIntOrNull(16)
-                if (hex != null) {
-                    bytes.write(hex)
-                    i += 3
-                    continue
-                }
+            if (c != '%') {
+                bytes.write(c.code)
+                i++
+                continue
             }
-            bytes.write(c.code)
-            i++
+            if (i + 2 >= value.length) {
+                return null
+            }
+            val hex = value.substring(i + 1, i + 3).toIntOrNull(16) ?: return null
+            bytes.write(hex)
+            i += 3
         }
         return bytes.toString(Charsets.UTF_8.name())
     }
