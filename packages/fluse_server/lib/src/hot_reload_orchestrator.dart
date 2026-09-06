@@ -78,13 +78,19 @@ final class HotReloadResult {
 ///
 /// | 経路 | 送るもの |
 /// |---|---|
-/// | コンパイルエラー | **どちらも送らない**。次回の recompile が同じ差分を再送する |
+/// | コンパイルエラー | **どちらも送らない** |
 /// | reload 失敗 | **必ず `reject`**。送らないと差分が「送信済み」のまま残る |
 /// | 成功 | `accept` |
 ///
 /// reload 失敗時に `accept` を送ると `frontend_server` が「送信済み」と
 /// 誤認し、以降そのファイルの差分が二度と送られなくなる。再現性が低く
 /// デバッグが極めて困難な不具合になる。
+///
+/// **`reject` だけでは足りない。** 実際の `frontend_server` で確かめた
+/// ところ、差分に何が載るかは `recompile` の invalidate に入れたファイル
+/// で決まる（L2 統合テスト）。届かなかった変更をこちらが覚えておき、
+/// 次回の invalidate に入れ直さないと、その変更は端末へ届かないまま
+/// 消える。[unapplied] がその持ち越し。
 final class HotReloadOrchestrator {
   HotReloadOrchestrator({
     required CompilerContract compiler,
@@ -139,6 +145,18 @@ final class HotReloadOrchestrator {
   /// 一度特定した isolate は使い回す。毎回 `getVM` を投げると遅い。
   String? _isolateId;
 
+  /// まだ端末に入っていない変更のファイル。
+  ///
+  /// **`reject` だけでは戻ってこない。** `frontend_server` が差分に何を
+  /// 載せるかは `recompile` の invalidate で決まり、`reject` はその
+  /// ファイルを最後に `accept` した状態へ戻すだけ。覚えておいて次回の
+  /// invalidate に入れ直さないと、失敗した変更は端末へ届かないまま
+  /// 消える（L2 統合テストで確認）。
+  final Set<Uri> _unapplied = <Uri>{};
+
+  /// まだ端末に入っていない変更のファイル。テストと診断のために見せる。
+  Set<Uri> get unapplied => Set<Uri>.unmodifiable(_unapplied);
+
   /// キャッシュ済みの isolate を捨てる。
   ///
   /// Hot Restart の後など、isolate が作り直された場合に呼ぶ。
@@ -151,11 +169,15 @@ final class HotReloadOrchestrator {
   }) async {
     final Map<String, int> timings = <String, int>{};
 
+    // 前回までに届かなかったものを混ぜる。**落とすと二度と届かない。**
+    _unapplied.addAll(invalidated);
+    final List<Uri> effective = _unapplied.toList(growable: false);
+
     // --- 1. 差分コンパイル -------------------------------------------------
     final CompileOutput compiled = await _measure(
       stageRecompile,
       timings,
-      () => _compiler.recompile(mainUri, invalidated),
+      () => _compiler.recompile(mainUri, effective),
     );
 
     if (compiled.hasErrors) {
@@ -185,6 +207,8 @@ final class HotReloadOrchestrator {
       // 適用していないので reject を送る（設計 §10-2 が警告するのは
       // 「適用していないのに accept する」ほうであり、その逆は安全）。
       await _rejectIfPending();
+      // 差分が無いのだから、持ち越すものも無い。
+      _unapplied.clear();
       _logger?.debug('差分 dill が無いため転送をスキップしました');
       return HotReloadResult(
         status: HotReloadStatus.success,
@@ -263,6 +287,8 @@ final class HotReloadOrchestrator {
     }
 
     _compiler.accept();
+    // 端末に入った。ここで初めて持ち越しを解く。
+    _unapplied.clear();
 
     // --- 4. asset の evict -------------------------------------------------
     // ここから先は accept 済みなので reject できない。失敗しても

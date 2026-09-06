@@ -184,6 +184,76 @@ void main() {
 
   tearDown(() => temp.deleteSync(recursive: true));
 
+  group('届かなかった変更の持ち越し', () {
+    // `reject` を送っても `frontend_server` は次の差分に載せてくれない。
+    // 載るかどうかは invalidate に入れたファイルで決まる（L2 統合テスト）。
+    final Uri other = Uri.parse('org-dartlang-root:///lib/extra.dart');
+
+    test('reload に失敗したら次の recompile に混ぜ直す', () async {
+      final HotReloadOrchestrator orchestrator = buildOrchestrator();
+      vmService.reloadResult = const ReloadResult(
+        success: false,
+        notices: <String>['適用できません'],
+      );
+
+      await orchestrator.reload(invalidated: <Uri>[other]);
+      expect(orchestrator.unapplied, <Uri>{other});
+
+      vmService.reloadResult = const ReloadResult(success: true);
+      await orchestrator.reload(invalidated: <Uri>[mainUri]);
+
+      expect(compiler.recompileCalls.last.$2.toSet(), <Uri>{
+        other,
+        mainUri,
+      }, reason: '失敗した変更を落とすと、端末へ届かないまま消える');
+      expect(orchestrator.unapplied, isEmpty);
+    });
+
+    test('コンパイルエラーでも持ち越す', () async {
+      final HotReloadOrchestrator orchestrator = buildOrchestrator();
+      compiler.output = errorOutput();
+
+      await orchestrator.reload(invalidated: <Uri>[other]);
+      expect(orchestrator.unapplied, <Uri>{other});
+
+      compiler.output = successOutput();
+      await orchestrator.reload(invalidated: <Uri>[mainUri]);
+
+      expect(compiler.recompileCalls.last.$2.toSet(), <Uri>{other, mainUri});
+    });
+
+    test('例外で抜けても持ち越す', () async {
+      final HotReloadOrchestrator orchestrator = buildOrchestrator();
+      devFS.error = StateError('転送できません');
+
+      await expectLater(
+        orchestrator.reload(invalidated: <Uri>[other]),
+        throwsStateError,
+      );
+      expect(orchestrator.unapplied, <Uri>{other});
+
+      // 転送が直った後、同じファイルが差分に戻ってくるところまで見る。
+      devFS.error = null;
+      await orchestrator.reload(invalidated: <Uri>[mainUri]);
+
+      expect(
+        compiler.recompileCalls.last.$2,
+        unorderedEquals(<Uri>[other, mainUri]),
+      );
+      expect(orchestrator.unapplied, isEmpty);
+    });
+
+    test('入ったら持ち越さない', () async {
+      final HotReloadOrchestrator orchestrator = buildOrchestrator();
+
+      await orchestrator.reload(invalidated: <Uri>[other]);
+      expect(orchestrator.unapplied, isEmpty);
+
+      await orchestrator.reload(invalidated: <Uri>[mainUri]);
+      expect(compiler.recompileCalls.last.$2, <Uri>[mainUri]);
+    });
+  });
+
   group('成功経路', () {
     test('accept → evict → reassemble の順に進む', () async {
       final HotReloadOrchestrator orchestrator = buildOrchestrator();
