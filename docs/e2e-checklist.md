@@ -37,6 +37,8 @@ $ dart pub global activate --source path packages/fluse_cli
 
 - 対象が Flutter プロジェクトであること（`pubspec.yaml` に `flutter:` がある）
 - 実機が USB で繋がり、`adb devices` に出ること（USB デバッグを許可済み）
+  - **シナリオ2だけはこの前提を外す。** adb が無い状況を作るのがあちらの
+    目的なので、そちらの「前提」に従う
 - PC と実機が**同じ Wi-Fi**に居ること。別セグメントだと QR は読めても繋がらない
 - `fluse doctor` が全項目 OK であること
 
@@ -173,10 +175,23 @@ $ fluse start
 
 ## シナリオ2: adb が無い時の APK 配信
 
-**前提**: `fluse start` が動いていること。`fluse.yaml` の `serveApk` が
-`true`（既定）であること。
+**前提**: **共通の前提のうち、USB 接続と `adb devices` は満たさない状態で
+行う。** adb が無い（あるいは端末を繋げない）ときの導線を見るのが目的。
 
-**操作**: 実機のブラウザで `http://<IP>:<ポート>/` を開く。
+順番が要る。**先に入れてから外す。**
+
+1. 共通の前提が揃った状態で `fluse init` まで済ませ、
+   `.flutter_preview/build/preview.apk` を作っておく（配る APK が無いと
+   案内ページにダウンロードのボタンが出ない）
+2. USB を抜く。`adb` を PATH から外してもよい
+3. `fluse start` を実行する
+
+`fluse start` は端末を要求しないので、adb が無くても立ち上がる。
+`fluse.yaml` の `serveApk` が `true`（既定）であること。
+
+**操作**: 実機のブラウザで `http://<IP>:<ポート>/` を開く
+（配っているのは `fluse start` が立てる `WsServer`。`fluse_builder` の
+`ApkServer` とは別物で、あちらは `/apk` しか持たない）。
 
 **期待**:
 
