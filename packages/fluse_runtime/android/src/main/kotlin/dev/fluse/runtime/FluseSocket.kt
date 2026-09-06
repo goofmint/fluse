@@ -1,5 +1,6 @@
 package dev.fluse.runtime
 
+import java.util.concurrent.atomic.AtomicBoolean
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -84,13 +85,19 @@ internal class OkHttpFluseSocketFactory(
         private val events: FluseSocketEvents,
     ) : WebSocketListener() {
         /**
-         * こちらから閉じた後は通知しない。
+         * 切断を伝えるのは一度だけ。
          *
-         * 閉じた直後の `onFailure` を切断として扱うと、止めたはずの
-         * 再接続がもう一度動き出す。
+         * **判定と代入を分けてはいけない。** `close()` と OkHttp の
+         * コールバックは別のスレッドから同時に来る。読んでから書くまでの
+         * 間に割り込まれると、閉じた後の `onFailure` が切断として通り、
+         * 止めたはずの再接続がもう一度動き出す。
          */
-        @Volatile
-        var detached = false
+        private val detachedFlag = AtomicBoolean(false)
+
+        /** まだ伝えていなければ true を返し、以後は false。 */
+        fun detach(): Boolean = detachedFlag.compareAndSet(false, true)
+
+        val detached: Boolean get() = detachedFlag.get()
 
         override fun onOpen(
             webSocket: WebSocket,
@@ -123,8 +130,7 @@ internal class OkHttpFluseSocketFactory(
         ) {
             // 応答して閉じないと相手が待ち続ける。
             webSocket.close(code, null)
-            if (detached) return
-            detached = true
+            if (!detach()) return
             events.onClosed(reason)
         }
 
@@ -133,8 +139,7 @@ internal class OkHttpFluseSocketFactory(
             t: Throwable,
             response: Response?,
         ) {
-            if (detached) return
-            detached = true
+            if (!detach()) return
             events.onFailure(t)
         }
     }
@@ -146,7 +151,7 @@ internal class OkHttpFluseSocketFactory(
         override fun sendText(text: String): Boolean = socket.send(text)
 
         override fun close(reason: String) {
-            adapter.detached = true
+            adapter.detach()
             // 1000 は正常終了。異常は WebSocket の close フレームに委ねる
             // （設計 §2.2.1 の CloseMessage の注記）。
             socket.close(NORMAL_CLOSURE, reason)

@@ -138,6 +138,18 @@ class FluseConnection internal constructor(
 
     private var socket: FluseSocket? = null
 
+    /**
+     * 今の接続の世代。
+     *
+     * **予約した再接続は取り消せない。** [connect] や [stop] で状況が
+     * 変わった後に古い予約が動くと、生きているソケットを置き換えて
+     * 二重のセッションになる。世代を見て、古い分は捨てる。
+     *
+     * 遅れて届くコールバックにも同じ番号を持たせてある。閉じた直後の
+     * 通知が新しい接続の状態を消してしまうのを防ぐため。
+     */
+    private var generation = 0L
+
     /** 止めたら再接続しない。[connect] を呼び直すまで動かない。 */
     private var stopped = true
 
@@ -175,20 +187,25 @@ class FluseConnection internal constructor(
         endpoint: FluseEndpoint,
         pairingToken: String? = null,
     ) {
-        synchronized(lock) {
-            closeSocketLocked("繋ぎ直します")
-            this.endpoint = endpoint
-            this.pairingToken = pairingToken
-            stopped = false
-            backoff.reset()
-        }
-        openSocket()
+        val target =
+            synchronized(lock) {
+                closeSocketLocked("繋ぎ直します")
+                this.endpoint = endpoint
+                this.pairingToken = pairingToken
+                stopped = false
+                backoff.reset()
+                // 進めた後の番号で開く。前置でないと1つ前の世代を渡してしまう。
+                ++generation
+            }
+        openSocket(target)
     }
 
     /** 止める。以後は再接続しない。 */
     fun stop() {
         synchronized(lock) {
             stopped = true
+            // 世代を進めて、予約済みの再接続と遅れて届く通知を無効にする。
+            generation++
             closeSocketLocked("終了します")
         }
     }
@@ -224,16 +241,26 @@ class FluseConnection internal constructor(
         current.sendText(message.toJson().toString())
     }
 
-    private fun openSocket() {
-        val target = synchronized(lock) { if (stopped) null else endpoint } ?: return
-        val created = socketFactory.open(target.webSocketUrl(), Events())
+    private fun openSocket(forGeneration: Long) {
+        val target =
+            synchronized(lock) {
+                if (stopped || generation != forGeneration) null else endpoint
+            } ?: return
+
+        val events = Events(forGeneration)
+        val created = socketFactory.open(target.webSocketUrl(), events)
         synchronized(lock) {
-            if (stopped) {
+            if (stopped || generation != forGeneration) {
                 created.close("終了します")
                 return
             }
             socket = created
         }
+
+        // **繋がった通知は `socket` を入れる前に来ることがある。**
+        // 先に来ていたら、ここで hello を送る。取りこぼすと名乗らないまま
+        // 待ち続け、サーバから見れば無言の接続になる。
+        events.attach()
     }
 
     private fun closeSocketLocked(reason: String) {
@@ -324,6 +351,8 @@ class FluseConnection internal constructor(
         // 待って再送しても同じ答えが返る（設計 §5.1）。
         synchronized(lock) {
             stopped = true
+            // 遅れて届く通知で再接続が動き出さないようにする。
+            generation++
             closeSocketLocked("断られました")
         }
         Log.w(TAG, "接続を断られました: ${reject.code}")
@@ -339,13 +368,26 @@ class FluseConnection internal constructor(
 
     private fun handleClose(close: CloseMessage) {
         Log.i(TAG, "サーバから切断されました: ${close.code}")
+        // **ソケットも閉じる。** 残すと OkHttp 側の通知が後から来て、
+        // 切断処理とバックオフが二重に走る。
+        val current =
+            synchronized(lock) {
+                socket?.close("サーバが切断しました")
+                generation
+            }
         // 正常終了でも繋ぎ直す。サーバが再起動しただけかもしれない。
-        onDisconnected()
+        onDisconnected(current)
     }
 
-    private fun onDisconnected() {
+    private fun onDisconnected(forGeneration: Long) {
         val delayMs =
             synchronized(lock) {
+                // **古い接続の通知では何も消さない。** 閉じた直後の通知は
+                // 新しいソケットが入った後に届くことがあり、そこで消すと
+                // 生きている接続の状態が失われる。
+                if (generation != forGeneration) {
+                    return
+                }
                 socket = null
                 sessionId = null
                 sentVmServiceUri = null
@@ -356,13 +398,48 @@ class FluseConnection internal constructor(
             return
         }
         Log.i(TAG, "${delayMs}ms 後に繋ぎ直します")
-        scheduler.schedule(delayMs) { openSocket() }
+        scheduler.schedule(delayMs) { openSocket(forGeneration) }
     }
 
-    private inner class Events : FluseSocketEvents {
-        override fun onOpen() = sendHello()
+    /**
+     * 1本のソケットから来る出来事。
+     *
+     * 開いた世代を持たせてある。後から届いた古い世代の通知は捨てる。
+     */
+    private inner class Events(
+        private val forGeneration: Long,
+    ) : FluseSocketEvents {
+        private val gate = Any()
+        private var opened = false
+        private var attached = false
 
-        override fun onText(text: String) = handleText(text)
+        /** [openSocket] が `socket` を入れ終えたら呼ぶ。 */
+        fun attach() {
+            val ready =
+                synchronized(gate) {
+                    attached = true
+                    opened
+                }
+            if (ready) {
+                sendHello()
+            }
+        }
+
+        override fun onOpen() {
+            val ready =
+                synchronized(gate) {
+                    opened = true
+                    attached
+                }
+            if (ready) {
+                sendHello()
+            }
+        }
+
+        override fun onText(text: String) {
+            if (isStale()) return
+            handleText(text)
+        }
 
         override fun onBinary(frame: ByteArray) {
             // トンネルは Task 4.3 の範囲外。受理前に binary が来ることは
@@ -370,11 +447,14 @@ class FluseConnection internal constructor(
             Log.w(TAG, "トンネルの受け手がまだありません（${frame.size}バイトを捨てました）")
         }
 
-        override fun onClosed(reason: String) = onDisconnected()
+        override fun onClosed(reason: String) = onDisconnected(forGeneration)
 
         override fun onFailure(error: Throwable) {
+            if (isStale()) return
             Log.w(TAG, "接続が切れました: $error")
-            onDisconnected()
+            onDisconnected(forGeneration)
         }
+
+        private fun isStale(): Boolean = synchronized(lock) { generation != forGeneration }
     }
 }

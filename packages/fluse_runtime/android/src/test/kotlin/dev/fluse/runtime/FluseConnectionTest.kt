@@ -1,6 +1,8 @@
 package dev.fluse.runtime
 
 import dev.fluse.protocol.AcceptMessage
+import dev.fluse.protocol.CloseCode
+import dev.fluse.protocol.CloseMessage
 import dev.fluse.protocol.FLUSE_PROTOCOL_VERSION
 import dev.fluse.protocol.FluseMessage
 import dev.fluse.protocol.HelloMessage
@@ -218,6 +220,64 @@ internal class FluseConnectionTest {
         assertEquals(emptyList(), f.scheduler.delays)
     }
 
+    @Test
+    fun `繋ぎ直した後は古いソケットの切断を無視する`() {
+        // 閉じた直後の通知は、新しいソケットが入った後に届くことがある。
+        // そこで状態を消すと、生きている接続が失われる。
+        val f = fixture()
+        f.connection.connect(endpoint)
+        val old = f.sockets.latest
+
+        f.connection.connect(endpoint)
+        old.fail()
+
+        assertEquals(emptyList(), f.scheduler.delays)
+        assertEquals(0, f.listener.disconnected)
+    }
+
+    @Test
+    fun `繋ぎ直したら古い予約では開き直さない`() {
+        // 取り消せない予約が後から動くと、生きているソケットを置き換えて
+        // 二重のセッションになる。
+        val f = fixture()
+        f.connection.connect(endpoint)
+        f.sockets.latest.fail()
+        assertEquals(listOf(1_000L), f.scheduler.delays)
+
+        f.connection.connect(endpoint)
+        val beforeRetry = f.sockets.opened.size
+        f.scheduler.runNext()
+
+        assertEquals(beforeRetry, f.sockets.opened.size)
+    }
+
+    @Test
+    fun `close を受け取ったらソケットも閉じる`() {
+        // 残すと OkHttp 側の通知が後から来て、切断処理が二重に走る。
+        val f = fixture()
+        f.connection.connect(endpoint)
+        f.sockets.latest.open()
+        f.sockets.latest.receive(AcceptMessage("s-1", 5_000))
+        val current = f.sockets.latest
+
+        current.receive(CloseMessage.of(CloseCode.SHUTDOWN))
+
+        assertTrue(current.closed)
+        assertEquals(listOf(1_000L), f.scheduler.delays)
+    }
+
+    @Test
+    fun `繋がった通知が先に来ても hello を送る`() {
+        // OkHttp はコールバックを登録した後にソケットを返す。onOpen が
+        // 先に走ると、取りこぼして名乗らないまま待ち続ける。
+        val f = fixture()
+        f.sockets.openImmediately = true
+
+        f.connection.connect(endpoint)
+
+        assertEquals(1, f.sockets.latest.countOf<HelloMessage>())
+    }
+
     // --------------------------------------------------------- vmServiceReady
 
     @Test
@@ -286,6 +346,9 @@ internal class FluseConnectionTest {
 internal class FakeSocketFactory : FluseSocketFactory {
     val opened = mutableListOf<FakeSocket>()
 
+    /** OkHttp のように、ソケットを返す前に onOpen を走らせる。 */
+    var openImmediately = false
+
     val latest: FakeSocket get() = opened.last()
 
     override fun open(
@@ -294,6 +357,9 @@ internal class FakeSocketFactory : FluseSocketFactory {
     ): FluseSocket {
         val socket = FakeSocket(url, events)
         opened.add(socket)
+        if (openImmediately) {
+            socket.open()
+        }
         return socket
     }
 }

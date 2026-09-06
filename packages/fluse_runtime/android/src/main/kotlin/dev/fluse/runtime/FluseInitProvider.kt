@@ -253,6 +253,9 @@ internal class ConnectingStartupHandler(
                 Log.e(FluseRuntimePlugin.TAG, "接続の準備ができませんでした: $e")
                 return
             }
+        // **接続より先に届いた分を渡す。** 渡さないと、受理できたのに
+        // 送るものが無い状態になり、初回の vmServiceReady が落ちる。
+        FluseRuntimePlugin.latestVmServiceUri?.let { connection.vmServiceReady(it) }
         connection.connect(FluseEndpoint(host, port))
     }
 

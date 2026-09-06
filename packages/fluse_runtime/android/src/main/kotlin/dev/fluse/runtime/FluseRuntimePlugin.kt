@@ -27,6 +27,17 @@ class FluseRuntimePlugin :
         const val TAG = "fluse"
 
         /**
+         * 最後に受け取った VM Service の URI。
+         *
+         * **接続より先に届く。** `flusePreviewMain` はアプリの起動と並行に
+         * 走るため、[FluseConnection] がまだ無い時点で来ることがある。
+         * インスタンスに持たせると、後から作られた接続へ渡せない。
+         */
+        @Volatile
+        var latestVmServiceUri: String? = null
+            private set
+
+        /**
          * マスク後に残す先頭の文字数。
          *
          * Dart 側の `maskToken` と揃える（設計 §6.1）。
@@ -88,10 +99,8 @@ class FluseRuntimePlugin :
 
     private var channel: MethodChannel? = null
 
-    /** 受け取った VM Service の URI。Task 4.3 の接続処理が使う。 */
-    @Volatile
-    var vmServiceUri: String? = null
-        private set
+    /** 受け取った VM Service の URI。 */
+    val vmServiceUri: String? get() = latestVmServiceUri
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         val created = MethodChannel(binding.binaryMessenger, CHANNEL_NAME)
@@ -128,7 +137,7 @@ class FluseRuntimePlugin :
 
         // **Hot Restart のたびに同じ URI が再送される。** Dart 側の
         // main() が作り直されるため。上書きで冪等に受ける。
-        vmServiceUri = uri
+        latestVmServiceUri = uri
         Log.i(TAG, "VM Service を受け取りました: ${maskAuthCode(uri)}")
 
         // 接続がまだ無いこともある。`flusePreviewMain` はアプリの起動と
