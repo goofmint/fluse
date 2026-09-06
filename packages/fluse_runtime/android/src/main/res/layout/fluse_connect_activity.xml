@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ペアリング画面（設計 §2.2.5）。
+
+  カメラと手入力を1画面に持ち、片方だけを見せる。**画面を分けない。**
+  権限を断られた時とカメラの無い端末で行き先が変わるため、遷移を増やすと
+  「どこで詰まったか分からない」形になる。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/fluse_background">
+
+    <!-- カメラ側。 -->
+    <LinearLayout
+        android:id="@+id/fluse_scan_pane"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <androidx.camera.view.PreviewView
+            android:id="@+id/fluse_preview"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/fluse_scan_message"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="16dp"
+            android:textColor="@color/fluse_text"
+            android:text="@string/fluse_scan_hint" />
+
+        <Button
+            android:id="@+id/fluse_to_manual"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="16dp"
+            android:layout_marginBottom="16dp"
+            android:text="@string/fluse_manual_switch" />
+    </LinearLayout>
+
+    <!-- 手入力側。案内ページ（GET /）に出ている値を写してもらう。 -->
+    <ScrollView
+        android:id="@+id/fluse_manual_pane"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:id="@+id/fluse_manual_message"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingBottom="16dp"
+                android:textColor="@color/fluse_text"
+                android:text="@string/fluse_manual_hint" />
+
+            <EditText
+                android:id="@+id/fluse_host"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:autofillHints="none"
+                android:hint="@string/fluse_host_hint"
+                android:inputType="text"
+                android:textColor="@color/fluse_text" />
+
+            <EditText
+                android:id="@+id/fluse_port"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:autofillHints="none"
+                android:hint="@string/fluse_port_hint"
+                android:inputType="number"
+                android:textColor="@color/fluse_text" />
+
+            <EditText
+                android:id="@+id/fluse_token"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:autofillHints="none"
+                android:hint="@string/fluse_token_hint"
+                android:inputType="textNoSuggestions"
+                android:textColor="@color/fluse_text" />
+
+            <Button
+                android:id="@+id/fluse_connect"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/fluse_connect" />
+        </LinearLayout>
+    </ScrollView>
+</FrameLayout>

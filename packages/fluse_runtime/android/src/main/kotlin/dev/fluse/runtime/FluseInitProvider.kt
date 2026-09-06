@@ -260,6 +260,7 @@ internal class ConnectingStartupHandler(
     }
 
     override fun pair() {
-        Log.i(FluseRuntimePlugin.TAG, "ペアリングが必要です（Task 4.4 で実装）")
+        Log.i(FluseRuntimePlugin.TAG, "ペアリング画面を出します")
+        activity.startActivity(FluseConnectActivity.intentFor(activity))
     }
 }

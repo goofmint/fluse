@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ペアリング画面の文言。
+
+  接頭辞 `fluse_` を付けてある。ライブラリのリソースは利用者のアプリへ
+  そのまま混ざるため、名前がぶつかると相手の文言を上書きする。
+-->
+<resources>
+    <string name="fluse_scan_hint">サーバの画面に出ている QR を読み取ってください</string>
+    <string name="fluse_manual_switch">QR を使わずに入力する</string>
+    <string name="fluse_manual_hint">サーバの案内ページに出ている値を入力してください</string>
+    <string name="fluse_host_hint">ホスト（例: 192.168.0.10）</string>
+    <string name="fluse_port_hint">ポート（例: 8180）</string>
+    <string name="fluse_token_hint">トークン</string>
+    <string name="fluse_connect">接続する</string>
+
+    <string name="fluse_error_not_fluse">fluse の QR ではありません</string>
+    <string name="fluse_error_malformed">QR の内容を読み取れませんでした</string>
+    <string name="fluse_error_protocol">サーバとアプリのバージョンが違います。fluse を揃えてください</string>
+    <string name="fluse_error_project">別プロジェクトの Preview App です</string>
+    <string name="fluse_error_revision">ビルドに使った Flutter が違います。作り直してください</string>
+    <string name="fluse_error_auth">認証できませんでした。QR を取り直してください</string>
+    <string name="fluse_error_too_many">すでに別の端末が繋がっています</string>
+    <string name="fluse_error_input">ホスト・ポート・トークンを確認してください</string>
+    <string name="fluse_error_no_camera">カメラを使えません。手で入力してください</string>
+    <string name="fluse_error_app_info">Preview App の情報を読めませんでした</string>
+</resources>

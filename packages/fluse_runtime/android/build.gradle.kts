@@ -96,6 +96,21 @@ dependencies {
     // FluseTunnel は streamId ごとに coroutine を立てて双方向にコピーする。
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
 
+    // ペアリング画面（設計 §2.2.5 の FluseConnectActivity）。
+    // 権限要求に registerForActivityResult を使うため ComponentActivity が要る。
+    implementation("androidx.activity:activity:1.9.3")
+
+    // QR の読み取り。**CameraX は 1.3 系に留める。** 1.4 以降は minSdk 24 を
+    // 要求し、設計 §1.2 で広く取ると決めた minSdk 21 と衝突する。
+    implementation("androidx.camera:camera-core:1.3.4")
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-view:1.3.4")
+
+    // **`zxing-android-embedded` は使わない。** minSdk を引き上げるうえ、
+    // 画面まで持ち込むことになる。要るのはデコードだけ。
+    implementation("com.google.zxing:core:3.5.3")
+
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.0.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

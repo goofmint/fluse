@@ -1,4 +1,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      QR を読むために要る（設計 §4.2(a)）。
+
+      **無くても使えるようにしてある。** 断られた端末とカメラの無い端末では
+      手入力に落とす。ここで required="true" にすると、カメラの無い端末に
+      アプリを入れられなくなる。
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+
     <application>
         <!--
           プロセス起動時に自分から動き出すための入口（設計 §2.2.5）。
@@ -15,5 +28,17 @@
             android:authorities="${applicationId}.fluseinitprovider"
             android:exported="false"
             android:initOrder="100" />
+
+        <!--
+          ペアリング画面（設計 §2.2.5）。
+
+          exported="false" にする。**外から起動できてはいけない。**
+          呼べる相手は繋ぎ先を指定でき、任意のサーバへ端末を向けられる。
+        -->
+        <activity
+            android:name="dev.fluse.runtime.FluseConnectActivity"
+            android:exported="false"
+            android:label="fluse"
+            android:screenOrientation="portrait" />
     </application>
 </manifest>
