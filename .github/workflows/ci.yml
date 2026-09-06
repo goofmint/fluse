@@ -284,3 +284,45 @@ jobs:
       - name: L2統合テスト
         working-directory: packages/fluse_server
         run: dart test test/compiler_service_l2_integration_test.dart -r expanded
+
+  # 実 Flutter プロセスに対する L3統合テスト（Task 6.2）。
+  #
+  # Android 実機を使わずに反映経路を通せる唯一の経路。デスクトップの
+  # Flutter も端末と同じ VM Service を持つため、DevFS → reloadSources →
+  # evict → reassemble はそのまま検証できる。
+  #
+  # 他のジョブと違い、GTK のアプリを実際に起動する。表示サーバが要る。
+  l3-integration:
+    name: L3統合テスト（実 Flutter プロセス）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      # Linux デスクトップのビルドに要るもの。xvfb は窓を開くため。
+      - name: デスクトップの前提を入れる
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev xvfb
+
+      - name: Linux の成果物を取る
+        run: flutter precache --linux
+
+      - name: 依存解決
+        run: flutter pub get
+
+      # examples/counter_app は pub workspace のメンバではない。ここで
+      # 解決しておかないと、テストが自分でスキップに倒れる。
+      - name: フィクスチャの依存解決
+        working-directory: examples/counter_app
+        run: flutter pub get
+
+      - name: L3統合テスト
+        working-directory: packages/fluse_server
+        run: xvfb-run -a dart test test/reload_pipeline_l3_integration_test.dart -r expanded
