@@ -6,4 +6,8 @@ library;
 
 export 'src/flutter_sdk.dart';
 export 'src/host_platform.dart';
+export 'src/plugin_ref.dart';
+export 'src/project_analyzer.dart';
+export 'src/project_info.dart';
+export 'src/project_not_flutter_exception.dart';
 export 'src/sdk_not_found_exception.dart';
