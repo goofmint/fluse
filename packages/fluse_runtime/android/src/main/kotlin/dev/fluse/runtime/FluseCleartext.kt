@@ -20,30 +20,47 @@ import android.security.NetworkSecurityPolicy
  */
 object FluseCleartext {
     /**
-     * `NetworkSecurityPolicy` にホスト別の判定が入った版。
+     * `NetworkSecurityPolicy` が入った版。
      *
-     * これ未満の端末では `ws://` は素通りする（API 28 で既定が変わる前）。
+     * これ未満の端末に尋ねる先は無く、`usesCleartextTraffic` も見られない。
+     * `ws://` は素通りする。
      */
-    const val MIN_POLICY_SDK = Build.VERSION_CODES.N
+    const val MIN_POLICY_SDK = Build.VERSION_CODES.M
+
+    /**
+     * ホスト別に尋ねられるようになった版。
+     *
+     * API 23 は端末全体の可否しか答えない。**そこで打ち切らない。**
+     * API 23 でも `usesCleartextTraffic="false"` は効くため、素通りさせると
+     * 塞がれていることに気づけない。
+     */
+    const val MIN_PER_HOST_SDK = Build.VERSION_CODES.N
 
     /** 端末の設定を見て、[host] へ平文で繋げるか。 */
-    fun isPermitted(host: String): Boolean = isPermitted(Build.VERSION.SDK_INT, host, ::askPolicy)
+    fun isPermitted(host: String): Boolean =
+        isPermitted(Build.VERSION.SDK_INT, host, ::askAll, ::askHost)
 
     /**
      * 判定そのもの。Android のランタイムに触らないので単体で確かめられる。
      *
-     * [ask] は端末に尋ねる手。古い端末では呼ばない。
+     * [askAll] は端末全体の可否、[askHost] は繋ぎ先ごとの可否。古い端末では
+     * どちらも呼ばない。
      */
     fun isPermitted(
         sdkInt: Int,
         host: String,
-        ask: (String) -> Boolean,
+        askAll: () -> Boolean,
+        askHost: (String) -> Boolean,
     ): Boolean {
         if (sdkInt < MIN_POLICY_SDK) {
             // 尋ねる先が無い。この頃の端末は平文を止めない。
             return true
         }
-        return ask(host)
+        if (sdkInt < MIN_PER_HOST_SDK) {
+            // ホスト別には答えられない。端末全体の可否で判じる。
+            return askAll()
+        }
+        return askHost(host)
     }
 
     /**
@@ -64,6 +81,8 @@ object FluseCleartext {
             append("  </domain-config>")
         }
 
-    private fun askPolicy(host: String): Boolean =
+    private fun askAll(): Boolean = NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted
+
+    private fun askHost(host: String): Boolean =
         NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted(host)
 }

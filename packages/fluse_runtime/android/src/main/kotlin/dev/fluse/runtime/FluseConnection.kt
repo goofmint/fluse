@@ -219,6 +219,14 @@ class FluseConnection internal constructor(
         // 繋ぎ直すことにもなる。
         if (!FluseCleartext.isPermitted(endpoint.host)) {
             val message = FluseCleartext.blockedMessage(endpoint.host)
+            // **今の接続も予約も畳む。** ここで戻るだけだと、繋ぎ直しを
+            // 待っている予約が古い繋ぎ先で動き出す。繋ぎ先を変えたのに
+            // 前の相手へ繋ぎに行くことになる。
+            synchronized(lock) {
+                stopped = true
+                generation++
+                closeSocketLocked("平文が塞がれています")
+            }
             Log.e(TAG, message)
             notifyListeners { it.onCleartextBlocked(endpoint.host, message) }
             return

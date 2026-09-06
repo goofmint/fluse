@@ -32,10 +32,26 @@
       平文で流すのは Phase1 の明示的な設計判断（設計 §6.1）。LAN 内に
       閉じることを唯一の境界としている。
 
-      `tools:replace` を付けるのは、利用者のアプリが値を持たない時に
-      こちらの true を通すため。**利用者が自分で宣言していればそちらが勝つ。**
-      マニフェストの優先順位はアプリ側が上で、ライブラリからは覆せない。
-      その場合は実行時に FluseCleartext が気づいて理由を出す。
+      **アプリが android:usesCleartextTraffic="false" を宣言していると、
+      ここでビルドが止まる。** マニフェストの優先順位はアプリ側が上で、
+      ライブラリの tools:replace では覆せない。AGP は次のように言う。
+
+        Attribute application@usesCleartextTraffic value=(false) ... is also
+        present at [:fluse_runtime] value=(true).
+        Suggestion: add 'tools:replace="android:usesCleartextTraffic"' ...
+
+      止まるのは正しい。黙って false が勝つと、繋がらない理由が分からない
+      まま延々と繋ぎ直すことになる。**直し方は2つ。**
+
+      1. debug でだけプレビューを使うなら、アプリの
+         `src/debug/AndroidManifest.xml` から
+         android:usesCleartextTraffic="false" を外す。
+      2. false を保ったまま使うなら、アプリの debug 側に
+         tools:replace="android:usesCleartextTraffic" を足したうえで、
+         network_security_config.xml で開発サーバへの平文だけを許す。
+
+      アプリが networkSecurityConfig で塞いでいる場合は、ここは素通りする。
+      実行時に FluseCleartext が気づいて理由を出す。
     -->
     <application
         android:usesCleartextTraffic="true"

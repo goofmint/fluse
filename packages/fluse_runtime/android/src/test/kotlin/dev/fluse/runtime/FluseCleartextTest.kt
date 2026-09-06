@@ -8,25 +8,60 @@ import kotlin.test.assertTrue
 internal class FluseCleartextTest {
     private val host = "192.168.0.10"
 
+    private fun permitted(
+        sdkInt: Int,
+        all: Boolean = true,
+        perHost: Boolean = true,
+    ): Boolean = FluseCleartext.isPermitted(sdkInt, host, { all }, { perHost })
+
     @Test
     fun `古い端末では尋ねずに通す`() {
-        // NetworkSecurityPolicy にホスト別の判定が無い。呼ぶと落ちる。
+        // NetworkSecurityPolicy が無い。呼ぶと落ちる。
         var asked = false
+        val mark = { asked = true }
 
-        val permitted =
-            FluseCleartext.isPermitted(FluseCleartext.MIN_POLICY_SDK - 1, host) {
-                asked = true
-                false
-            }
+        val result =
+            FluseCleartext.isPermitted(
+                FluseCleartext.MIN_POLICY_SDK - 1,
+                host,
+                {
+                    mark()
+                    false
+                },
+                {
+                    mark()
+                    false
+                },
+            )
 
-        assertTrue(permitted)
+        assertTrue(result)
         assertFalse(asked, "古い端末で端末に尋ねてはいけない")
     }
 
     @Test
-    fun `新しい端末では端末の答えに従う`() {
-        assertTrue(FluseCleartext.isPermitted(FluseCleartext.MIN_POLICY_SDK, host) { true })
-        assertFalse(FluseCleartext.isPermitted(FluseCleartext.MIN_POLICY_SDK, host) { false })
+    fun `API 23 は端末全体の可否で判じる`() {
+        // ホスト別には答えられないが、usesCleartextTraffic は効く。
+        // 素通りさせると塞がれていることに気づけない。
+        assertTrue(permitted(FluseCleartext.MIN_POLICY_SDK, all = true))
+        assertFalse(permitted(FluseCleartext.MIN_POLICY_SDK, all = false))
+    }
+
+    @Test
+    fun `API 23 ではホスト別には尋ねない`() {
+        var askedHost = false
+
+        FluseCleartext.isPermitted(FluseCleartext.MIN_POLICY_SDK, host, { true }, {
+            askedHost = true
+            true
+        })
+
+        assertFalse(askedHost, "API 23 にホスト別の判定は無い")
+    }
+
+    @Test
+    fun `API 24 以降は端末の答えに従う`() {
+        assertTrue(permitted(FluseCleartext.MIN_PER_HOST_SDK, perHost = true))
+        assertFalse(permitted(FluseCleartext.MIN_PER_HOST_SDK, perHost = false))
     }
 
     @Test
@@ -35,10 +70,10 @@ internal class FluseCleartextTest {
         // networkSecurityConfig が開発サーバだけを許していることがある。
         var asked: String? = null
 
-        FluseCleartext.isPermitted(FluseCleartext.MIN_POLICY_SDK, host) {
+        FluseCleartext.isPermitted(FluseCleartext.MIN_PER_HOST_SDK, host, { false }, {
             asked = it
             true
-        }
+        })
 
         assertEquals(host, asked)
     }
