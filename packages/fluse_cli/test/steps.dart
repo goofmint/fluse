@@ -145,7 +145,8 @@ final class Steps implements ProcessManager {
       order.add('keytool');
       final File file = File(args[args.indexOf('-keystore') + 1]);
       file.parent.createSync(recursive: true);
-      file.writeAsStringSync('偽の keystore');
+      // 中身は要らない。`KeystoreManager` は在ることだけを見る。
+      file.createSync();
       return ProcessResult(1, 0, '', '');
     }
     if (args.first == 'chmod') {

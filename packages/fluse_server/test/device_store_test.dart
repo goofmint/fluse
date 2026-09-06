@@ -58,7 +58,8 @@ void main() {
     store.upsert(
       DeviceRecord(
         deviceId: 'device-2',
-        deviceToken: 'token-2',
+        // **決め打ちの文字列を置かない。** ダミーでもトークンは残さない。
+        deviceToken: generateToken(),
         deviceName: 'あと',
         issuedAt: DateTime.utc(2026, 2, 1),
       ),
@@ -66,7 +67,7 @@ void main() {
     store.upsert(
       DeviceRecord(
         deviceId: 'device-1',
-        deviceToken: 'token-1',
+        deviceToken: generateToken(),
         deviceName: 'さき',
         issuedAt: DateTime.utc(2026, 1, 1),
       ),

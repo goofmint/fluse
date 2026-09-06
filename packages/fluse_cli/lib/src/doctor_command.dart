@@ -36,6 +36,9 @@ final class DoctorCheck {
 /// **1つ落ちても止めない。** adb が無いから keystore を見ない、では
 /// 直しては再実行を繰り返すことになる。全部見てから並べる。
 final class DoctorCommand implements FluseCommand {
+  /// [probePort] はポートを掴めるかを確かめる。塞がっていれば投げる。
+  /// [isWindows] を省くと動いている OS を見る。**どれもテストから
+  /// 差し替える。** 実際に塞がった環境を作らずに検査を確かめられる。
   DoctorCommand({
     this.onOutput = print,
     this.probePort = _bindAndClose,

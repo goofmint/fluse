@@ -18,6 +18,8 @@ import 'fluse_context.dart';
 /// 解析 → 指紋の突き合わせ → エントリポイント → 署名鍵 → ビルド → 導入
 /// ```
 final class RebuildCommand implements FluseCommand {
+  /// 外に触るものは全て差し替えられるようにする。[builderFactory] は
+  /// `flutter build apk`、[installerFactory] は adb、[onOutput] は表示先。
   RebuildCommand({
     this.analyzer = const ProjectAnalyzer(),
     this.entrypointGenerator = const EntrypointGenerator(),
@@ -81,6 +83,8 @@ final class RebuildCommand implements FluseCommand {
     } on Object catch (error) {
       context.logger.error('$error');
       onOutput('$error');
+      // 環境側で止まっていることがある。次に何を見ればよいかを添える。
+      onOutput('環境の確認は `fluse doctor`。');
       return 1;
     }
   }

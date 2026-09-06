@@ -14,6 +14,9 @@ import 'fluse_context.dart';
 /// **一緒に並べない。** USB で繋がっていてもペアリングしていない端末や、
 /// ペアリング済みでも今は手元に無い端末がある。
 final class DevicesCommand implements FluseCommand {
+  /// [installerFactory] は adb を叩く側、[onOutput] は表示先。
+  /// **どちらもテストから差し替える。** 実機と `print` に縛ると、
+  /// 何を出したかを確かめられない。
   DevicesCommand({
     this.installerFactory = _defaultInstaller,
     this.onOutput = print,

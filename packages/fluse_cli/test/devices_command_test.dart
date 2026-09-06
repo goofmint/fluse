@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:fluse_builder/fluse_builder.dart';
 import 'package:fluse_cli/fluse_cli.dart';
@@ -33,8 +35,14 @@ void main() {
     processManager: steps,
   );
 
+  /// **トークンはその場で作る。** 決め打ちの文字列をコードに残さない
+  /// （ダミーでも置かない）。伏せられているかの確認にも同じ値を使う。
+  String newToken() => base64Url.encode(
+    List<int>.generate(24, (int _) => Random.secure().nextInt(256)),
+  );
+
   /// ペアリング済みの端末を1台書いておく。
-  void pair({String token = 'とても秘密なトークン'}) {
+  void pair({required String token}) {
     final DeviceStore store = DeviceStore.readFrom(
       File(p.join(temp.path, '.flutter_preview', 'devices.json')),
     );
@@ -59,7 +67,7 @@ void main() {
 
   test('繋がっている端末とペアリング済みの端末を並べる', () async {
     steps.devices = <String>['AAA'];
-    pair();
+    pair(token: newToken());
 
     expect(await runDevices(), 0);
 
@@ -70,11 +78,12 @@ void main() {
   });
 
   test('deviceToken は出さない', () async {
-    pair(token: 'ひみつ-トークン-xyz');
+    final String token = newToken();
+    pair(token: token);
 
     expect(await runDevices(), 0);
 
-    expect(output.join('\n'), isNot(contains('ひみつ-トークン-xyz')));
+    expect(output.join('\n'), isNot(contains(token)));
   });
 
   test('devices.json が無くても失敗しない', () async {
@@ -86,7 +95,7 @@ void main() {
   });
 
   test('adb が無くてもペアリング済みは出す', () async {
-    pair();
+    pair(token: newToken());
 
     steps.adbAvailable = false;
 

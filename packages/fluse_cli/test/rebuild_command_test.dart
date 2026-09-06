@@ -89,6 +89,8 @@ void main() {
 
       expect(steps.ran('build apk'), isFalse);
       expect(output.join('\n'), contains('fingerprint.json'));
+      // 何が起きたかだけでなく、次に何をすればよいかを添える。
+      expect(output.join('\n'), contains('fluse doctor'));
     });
 
     test('作り直したら指紋を更新する', () async {
