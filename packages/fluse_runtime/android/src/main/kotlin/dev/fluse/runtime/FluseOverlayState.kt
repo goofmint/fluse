@@ -85,7 +85,10 @@ object FluseOverlayState {
      * どこを直すかが分かればよいので、末尾の [PATH_SEGMENTS] 段だけ残す。
      */
     fun shorten(file: String): String {
-        val path = file.substringAfter("file://")
+        // **`\\` も区切りとして扱う。** frontend_server は動かした側の
+        // パスをそのまま返すため、Windows なら `C:\Users\...` の形で来る。
+        // `/` だけを見ていると丸ごと素通りする。
+        val path = file.substringAfter("file://").replace('\\', '/')
         val segments = path.split('/').filter { it.isNotEmpty() }
         if (segments.size <= PATH_SEGMENTS) {
             return segments.joinToString("/")

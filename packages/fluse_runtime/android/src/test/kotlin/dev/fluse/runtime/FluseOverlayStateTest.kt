@@ -110,6 +110,15 @@ internal class FluseOverlayStateTest {
     }
 
     @Test
+    fun `Windows のパスも短くする`() {
+        // frontend_server は動かした側のパスをそのまま返す。
+        assertEquals(
+            "${FluseOverlayState.ELLIPSIS}app/lib/home.dart",
+            FluseOverlayState.shorten("C:\\Users\\someone\\work\\app\\lib\\home.dart"),
+        )
+    }
+
+    @Test
     fun `compileOk で自動的に消す`() {
         // 利用者に閉じさせない。直ったのに赤いままだと直った事に気づけない。
         assertEquals(FluseOverlayCommand.Hide, FluseOverlayState.of(CompileOkMessage()))
