@@ -34,6 +34,12 @@ object FluseOverlayState {
     /** 診断が無い時に出す文言の代わり。 */
     const val NO_LOCATION = "場所不明"
 
+    /** 画面に残すパスの深さ。 */
+    const val PATH_SEGMENTS = 3
+
+    /** 端を落としたことを示す印。 */
+    const val ELLIPSIS = "…/"
+
     fun of(message: FluseMessage): FluseOverlayCommand =
         when (message) {
             is CompileErrorMessage ->
@@ -55,8 +61,36 @@ object FluseOverlayState {
      * 分からないと、赤画面はただ視界を塞ぐだけになる。
      */
     fun lineOf(entry: DiagnosticEntry): String {
-        val place = entry.location ?: NO_LOCATION
+        val place = placeOf(entry) ?: NO_LOCATION
         return "${markOf(entry.severity)} $place: ${entry.message}"
+    }
+
+    /** `file:line:col`。ファイルは短くしてから組み立てる。 */
+    fun placeOf(entry: DiagnosticEntry): String? {
+        val file = entry.file ?: return null
+        val shortened = shorten(file)
+        val line = entry.line ?: return shortened
+        val col = entry.col ?: return "$shortened:$line"
+        return "$shortened:$line:$col"
+    }
+
+    /**
+     * 画面に出すパスを短くする。
+     *
+     * `frontend_server` はホスト側の絶対パスをそのまま返す
+     * （`/Users/<名前>/work/app/lib/main.dart`）。**そのまま出さない。**
+     * 端末の画面に開発者の名前や置き場所まで映るうえ、狭い画面では肝心の
+     * ファイル名が押し出される。
+     *
+     * どこを直すかが分かればよいので、末尾の [PATH_SEGMENTS] 段だけ残す。
+     */
+    fun shorten(file: String): String {
+        val path = file.substringAfter("file://")
+        val segments = path.split('/').filter { it.isNotEmpty() }
+        if (segments.size <= PATH_SEGMENTS) {
+            return segments.joinToString("/")
+        }
+        return ELLIPSIS + segments.takeLast(PATH_SEGMENTS).joinToString("/")
     }
 
     /** 深刻度の目印。色を分けると赤画面の上で見分けが付かない。 */

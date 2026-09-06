@@ -84,6 +84,32 @@ internal class FluseOverlayStateTest {
     }
 
     @Test
+    fun `ホスト側の絶対パスをそのまま出さない`() {
+        // 端末の画面に開発者の名前や置き場所まで映る。狭い画面では肝心の
+        // ファイル名が押し出される。
+        val line = shown(entry(file = "/Users/someone/work/app/lib/ui/home.dart")).lines.single()
+
+        assertTrue(line.contains("lib/ui/home.dart"), line)
+        assertTrue(line.contains(FluseOverlayState.ELLIPSIS), line)
+        assertTrue(!line.contains("/Users/someone"), line)
+        // どこを直すかは残す。
+        assertTrue(line.contains(":42:7"), line)
+    }
+
+    @Test
+    fun `file スキームを外す`() {
+        val line = shown(entry(file = "file:///Users/someone/app/lib/main.dart")).lines.single()
+
+        assertTrue(!line.contains("file://"), line)
+    }
+
+    @Test
+    fun `短いパスはそのまま出す`() {
+        assertEquals("lib/main.dart", FluseOverlayState.shorten("lib/main.dart"))
+        assertEquals("a/b/c.dart", FluseOverlayState.shorten("/a/b/c.dart"))
+    }
+
+    @Test
     fun `compileOk で自動的に消す`() {
         // 利用者に閉じさせない。直ったのに赤いままだと直った事に気づけない。
         assertEquals(FluseOverlayCommand.Hide, FluseOverlayState.of(CompileOkMessage()))
@@ -100,82 +126,134 @@ internal class FluseOverlayStateTest {
 /**
  * バッジが接続の出来事をどう読むか。
  *
- * View は JVM 単体テストで動かせないので、状態の移り変わりだけを見る。
+ * View は JVM 単体テストで動かせないため、貼り付け先の無い状態で
+ * [FluseBadge] を直に動かし、状態の移り変わりだけを見る。
  */
 internal class FluseBadgeStateTest {
-    /** 出来事を受けた後の状態を返す。 */
-    private fun after(vararg events: (FluseConnectionListener) -> Unit): FluseBadgeState {
-        val recorder = StateRecorder()
-        events.forEach { it(recorder) }
-        return recorder.state
-    }
+    /** すぐ実行する。メインスレッドの Looper が無いテストで使う。 */
+    private val now = java.util.concurrent.Executor { it.run() }
 
-    private class StateRecorder : FluseConnectionListener {
-        var state = FluseBadgeState.CONNECTING
-
-        override fun onConnected(sessionId: String) {
-            state = FluseBadgeState.CONNECTED
-        }
-
-        override fun onDisconnected() {
-            state = FluseBadgeState.DISCONNECTED
-        }
-
-        override fun onNeedsPairing(reason: String) {
-            state = FluseBadgeState.NEEDS_PAIRING
-        }
-
-        override fun onRejected(
-            code: String,
-            message: String,
-        ) {
-            state = FluseBadgeState.REJECTED
-        }
-
-        override fun onMessage(message: dev.fluse.protocol.FluseMessage) = Unit
-    }
+    private fun badge() = FluseBadge(main = now)
 
     @Test
     fun `繋がる前は接続中`() {
         // 何も出さないと「繋がっていない」ことに気づけない。
-        assertEquals(FluseBadgeState.CONNECTING, after())
+        assertEquals(FluseBadgeState.CONNECTING, badge().state)
     }
 
     @Test
     fun `accept で接続済みになる`() {
-        assertEquals(FluseBadgeState.CONNECTED, after({ it.onConnected("s-1") }))
+        val badge = badge()
+
+        badge.onConnected("s-1")
+
+        assertEquals(FluseBadgeState.CONNECTED, badge.state)
     }
 
     @Test
     fun `切れたら切断に戻る`() {
-        assertEquals(
-            FluseBadgeState.DISCONNECTED,
-            after({ it.onConnected("s-1") }, { it.onDisconnected() }),
-        )
+        val badge = badge()
+        badge.onConnected("s-1")
+
+        badge.onDisconnected()
+
+        assertEquals(FluseBadgeState.DISCONNECTED, badge.state)
     }
 
     @Test
     fun `繋ぎ直せば接続済みに戻る`() {
-        assertEquals(
-            FluseBadgeState.CONNECTED,
-            after({ it.onConnected("s-1") }, { it.onDisconnected() }, { it.onConnected("s-2") }),
-        )
+        val badge = badge()
+        badge.onConnected("s-1")
+        badge.onDisconnected()
+
+        badge.onConnected("s-2")
+
+        assertEquals(FluseBadgeState.CONNECTED, badge.state)
     }
 
     @Test
-    fun `断られたら接続不可のまま`() {
+    fun `断られたら接続不可になる`() {
         // 繋ぎ直しでは解けない。押してペアリングし直す道を示す。
-        assertEquals(
-            FluseBadgeState.REJECTED,
-            after({ it.onRejected("TOO_MANY_DEVICES", "1台だけです") }),
-        )
+        val badge = badge()
+
+        badge.onRejected("TOO_MANY_DEVICES", "1台だけです")
+
+        assertEquals(FluseBadgeState.REJECTED, badge.state)
     }
 
     @Test
     fun `認証に落ちたら要ペアリング`() {
-        assertEquals(
-            FluseBadgeState.NEEDS_PAIRING,
-            after({ it.onNeedsPairing("認証できません") }),
+        val badge = badge()
+
+        badge.onNeedsPairing("認証できません")
+
+        assertEquals(FluseBadgeState.NEEDS_PAIRING, badge.state)
+    }
+
+    @Test
+    fun `制御メッセージでは変わらない`() {
+        // reload や compileError はバッジの話ではない。
+        val badge = badge()
+        badge.onConnected("s-1")
+
+        badge.onMessage(ReloadMessage())
+
+        assertEquals(FluseBadgeState.CONNECTED, badge.state)
+    }
+}
+
+/**
+ * 赤画面が中身を持ち替えるところ。
+ *
+ * 貼り付け先の無い状態で [FluseErrorOverlay] を直に動かす。
+ */
+internal class FluseErrorOverlayTest {
+    private val now = java.util.concurrent.Executor { it.run() }
+
+    @Test
+    fun `compileError で中身を持つ`() {
+        val overlay = FluseErrorOverlay(main = now)
+
+        overlay.onMessage(
+            CompileErrorMessage(
+                "1件のエラー",
+                listOf(DiagnosticEntry(DiagnosticSeverity.ERROR, "型が合いません", "lib/main.dart", 42, 7)),
+            ),
         )
+
+        assertEquals("1件のエラー", overlay.content?.summary)
+    }
+
+    @Test
+    fun `compileOk で中身を捨てる`() {
+        val overlay = FluseErrorOverlay(main = now)
+        overlay.onMessage(CompileErrorMessage("1件のエラー", emptyList()))
+
+        overlay.onMessage(CompileOkMessage())
+
+        assertEquals(null, overlay.content)
+    }
+
+    @Test
+    fun `切れても消さない`() {
+        // サーバが落ちた時に赤画面まで消えると、直前に何が起きていたのかが
+        // 分からなくなる。
+        val overlay = FluseErrorOverlay(main = now)
+        overlay.onMessage(CompileErrorMessage("1件のエラー", emptyList()))
+
+        overlay.onDisconnected()
+
+        assertEquals("1件のエラー", overlay.content?.summary)
+    }
+
+    @Test
+    fun `reload では消さない`() {
+        // 直す前にエラーが読めなくなる。
+        val overlay = FluseErrorOverlay(main = now)
+        overlay.onMessage(CompileErrorMessage("1件のエラー", emptyList()))
+
+        overlay.onMessage(ReloadMessage())
+
+        assertEquals("1件のエラー", overlay.content?.summary)
     }
 }

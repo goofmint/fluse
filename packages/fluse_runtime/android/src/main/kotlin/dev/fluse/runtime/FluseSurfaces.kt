@@ -24,8 +24,15 @@ internal object FluseSurfaces {
         badge.start()
     }
 
-    /** 接続の出来事を受け取り始める。 */
+    /**
+     * 接続の出来事を受け取り始める。
+     *
+     * **接続を作った場所すべてから呼ぶ。** 再接続の道とペアリングの道で
+     * 入口が2つあり、片方だけに置くともう片方から入った時に赤画面も
+     * バッジも動かない。二度呼んでも増えない。
+     */
     fun listenTo(connection: FluseConnection) {
+        start()
         connection.addListener(overlay)
         connection.addListener(badge)
     }

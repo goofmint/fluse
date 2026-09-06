@@ -14,16 +14,17 @@ import dev.fluse.protocol.FluseMessage
  * 無くすために出す。押すとペアリング画面に戻る。
  */
 internal class FluseBadge(
-    private val layerFactory: (String, Int, Boolean, (Activity) -> View) -> FluseWindowLayer =
-        ::FluseWindowLayer,
+    main: java.util.concurrent.Executor = MainThreadExecutor,
 ) : FluseConnectionListener {
     private val layer =
-        layerFactory("バッジ", FluseWindowLayer.BADGE_GRAVITY, false, ::createView).also {
+        FluseWindowLayer("バッジ", FluseWindowLayer.BADGE_GRAVITY, false, ::createView, main).also {
             it.render = ::renderInto
         }
 
+    /** 今の見え方。テストと診断のために読めるようにしてある。 */
     @Volatile
-    private var state = FluseBadgeState.CONNECTING
+    var state = FluseBadgeState.CONNECTING
+        private set
 
     /** 出し始める。接続の前から出す。繋がらないことも状態のうち。 */
     fun start() {

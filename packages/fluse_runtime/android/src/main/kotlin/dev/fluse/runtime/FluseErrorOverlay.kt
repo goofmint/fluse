@@ -17,17 +17,17 @@ import dev.fluse.protocol.FluseMessage
  * 残るのが一番困るので、Android の View で直に重ねる。
  */
 internal class FluseErrorOverlay(
-    private val layerFactory: (String, Int, Boolean, (Activity) -> View) -> FluseWindowLayer =
-        ::FluseWindowLayer,
+    main: java.util.concurrent.Executor = MainThreadExecutor,
 ) : FluseConnectionListener {
     private val layer =
-        layerFactory("エラー表示", Gravity.CENTER, true, ::createView).also {
+        FluseWindowLayer("エラー表示", Gravity.CENTER, true, ::createView, main).also {
             it.render = ::renderInto
         }
 
-    /** 今出している中身。前面が入れ替わった時に書き戻す。 */
+    /** 今出している中身。前面が入れ替わった時に書き戻す。テストが見る。 */
     @Volatile
-    private var content: FluseOverlayContent? = null
+    var content: FluseOverlayContent? = null
+        private set
 
     /** 前面の入れ替わりを追い始める。 */
     fun start() {

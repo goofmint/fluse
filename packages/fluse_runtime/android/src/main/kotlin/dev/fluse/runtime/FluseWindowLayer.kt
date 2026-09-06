@@ -7,6 +7,8 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.FrameLayout
+import java.util.concurrent.Executor
 
 /**
  * 前面の Activity に View を重ねる。
@@ -24,6 +26,14 @@ internal class FluseWindowLayer(
     private val gravity: Int,
     private val fullscreen: Boolean,
     private val create: (Activity) -> View,
+    /**
+     * 状態と View を触る唯一のスレッド。
+     *
+     * **制御メッセージは OkHttp のスレッドで届く。** そこから直に
+     * `wanted` を触ると、`hide()` の後に走り出した `attach()` が古い値を
+     * 読んで貼り直してしまう。判断も操作もここへ寄せる。
+     */
+    private val main: Executor = MainThreadExecutor,
 ) : FluseForeground.Watcher {
     private var attachedTo: Activity? = null
     private var view: View? = null
@@ -34,56 +44,50 @@ internal class FluseWindowLayer(
     /** 貼り直した View に中身を書き戻すための手。 */
     var render: ((View) -> Unit)? = null
 
-    fun show() {
-        wanted = true
-        FluseForeground.activity?.let { attach(it) }
-    }
+    fun show() =
+        main.execute {
+            wanted = true
+            FluseForeground.activity?.let { attach(it) }
+        }
 
-    fun hide() {
-        wanted = false
-        detach()
-    }
+    fun hide() =
+        main.execute {
+            wanted = false
+            detach()
+        }
 
     /** 出したまま中身だけ書き換える。 */
-    fun update() {
-        view?.let { target -> render?.invoke(target) }
-    }
-
-    override fun onForeground(activity: Activity) {
-        if (!wanted) {
-            return
+    fun update() =
+        main.execute {
+            view?.let { target -> render?.invoke(target) }
         }
-        if (attachedTo === activity) {
-            return
-        }
-        detach()
-        attach(activity)
-    }
 
-    override fun onBackground() = detach()
+    override fun onForeground(activity: Activity) =
+        main.execute {
+            if (wanted && attachedTo !== activity) {
+                detach()
+                attach(activity)
+            }
+        }
+
+    override fun onBackground() = main.execute { detach() }
 
     private fun attach(activity: Activity) {
-        if (attachedTo != null) {
+        if (attachedTo != null || !wanted) {
             return
         }
-        // View は必ずメインスレッドで触る。制御メッセージは別スレッドで届く。
-        activity.runOnUiThread {
-            if (attachedTo != null || !wanted) {
-                return@runOnUiThread
+        val created =
+            try {
+                create(activity)
+            } catch (e: Exception) {
+                Log.w(FluseRuntimePlugin.TAG, "$name を組み立てられませんでした: $e")
+                return
             }
-            val created =
-                try {
-                    create(activity)
-                } catch (e: Exception) {
-                    Log.w(FluseRuntimePlugin.TAG, "$name を組み立てられませんでした: $e")
-                    return@runOnUiThread
-                }
-            render?.invoke(created)
+        render?.invoke(created)
 
-            if (addToWindow(activity, created) || addToContent(activity, created)) {
-                attachedTo = activity
-                view = created
-            }
+        if (addToWindow(activity, created) || addToContent(activity, created)) {
+            attachedTo = activity
+            view = created
         }
     }
 
@@ -136,7 +140,9 @@ internal class FluseWindowLayer(
                 } else {
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 }
-            activity.addContentView(target, ViewGroup.LayoutParams(size, size))
+            // **`ViewGroup.LayoutParams` では位置が伝わらない。** バッジが
+            // 隅ではなく既定の場所に出てしまう。
+            activity.addContentView(target, FrameLayout.LayoutParams(size, size, gravity))
             true
         } catch (e: Exception) {
             Log.w(FluseRuntimePlugin.TAG, "$name を画面へ足せませんでした: $e")
@@ -148,17 +154,11 @@ internal class FluseWindowLayer(
         val target = view ?: return
         attachedTo = null
         view = null
-        activity.runOnUiThread {
-            try {
-                if (target.parent === activity.window?.decorView?.parent ||
-                    target.windowToken != null
-                ) {
-                    activity.windowManager.removeViewImmediate(target)
-                }
-            } catch (e: Exception) {
-                // addContentView で足した場合はここに来る。親から外す。
-                (target.parent as? ViewGroup)?.removeView(target)
-            }
+        try {
+            activity.windowManager.removeViewImmediate(target)
+        } catch (e: Exception) {
+            // addContentView で足した場合はここに来る。親から外す。
+            (target.parent as? ViewGroup)?.removeView(target)
         }
     }
 

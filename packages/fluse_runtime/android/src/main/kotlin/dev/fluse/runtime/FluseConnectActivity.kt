@@ -263,6 +263,9 @@ class FluseConnectActivity :
 
         try {
             val connection = FluseConnection.getOrCreate(application, opened)
+            // 赤画面とバッジもこの接続を見る。ペアリングから入った時に
+            // 繋ぎ込みが漏れないよう、ここでも呼ぶ。
+            FluseSurfaces.listenTo(connection)
             connection.addListener(this)
             // **例外の外に置かない。** connect はその場でソケットを開き、
             // 繋ぎ先が URL として壊れていれば投げる。ここで抜けると
