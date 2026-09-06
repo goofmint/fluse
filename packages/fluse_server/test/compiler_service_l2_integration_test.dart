@@ -12,6 +12,8 @@ import 'package:fluse_server/fluse_server.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
+import 'integration_prerequisites.dart';
+
 /// 実 `frontend_server` に対する L2 統合テスト（設計 §7.2、Task 6.1）。
 ///
 /// 偽の `frontend_server` では、こちらの思い込みを検証しているだけになる。
@@ -106,20 +108,21 @@ void main() {
   /// 前提が揃っていなければスキップする。揃っていれば解決済みの SDK。
   FlutterSdk? ensurePrerequisites() {
     final SdkNotFoundException? error = sdkError;
+    final String? reason;
     if (error != null) {
-      markTestSkipped('Flutter SDK を解決できないためスキップ: ${error.reason}');
-      return null;
-    }
-    if (!File(
+      reason = 'Flutter SDK を解決できない: ${error.reason}';
+    } else if (!File(
       p.join(sampleApp, '.dart_tool', 'package_config.json'),
     ).existsSync()) {
-      markTestSkipped(
-        'examples/counter_app の依存が未解決のためスキップ'
-        '（flutter pub get を実行してください）',
-      );
-      return null;
+      reason =
+          'examples/counter_app の依存が未解決'
+          '（flutter pub get を実行してください）';
+    } else {
+      reason = null;
     }
-    return sdk;
+    return ensurePrerequisiteReason(reason, requireEnv: 'FLUSE_REQUIRE_L2')
+        ? sdk
+        : null;
   }
 
   Uri mainUri() => Uri.file(p.join(projectRoot, 'lib', 'main.dart'));

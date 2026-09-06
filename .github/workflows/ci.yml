@@ -250,8 +250,12 @@ jobs:
         working-directory: packages/fluse_protocol_kt
         run: ./gradlew installDist --no-daemon
 
+      # **前提を整えたジョブでは飛ばさせない。** 自分からスキップして
+      # 緑になると、何も検証していないのに通ったことになる。
       - name: L1統合テスト
         working-directory: packages/fluse_server
+        env:
+          FLUSE_REQUIRE_L1: "1"
         run: dart test test/tunnel_l1_integration_test.dart -r expanded
 
   # 実 frontend_server に対する L2統合テスト（Task 6.1）。
@@ -283,6 +287,8 @@ jobs:
 
       - name: L2統合テスト
         working-directory: packages/fluse_server
+        env:
+          FLUSE_REQUIRE_L2: "1"
         run: dart test test/compiler_service_l2_integration_test.dart -r expanded
 
   # 実 Flutter プロセスに対する L3統合テスト（Task 6.2）。
@@ -325,4 +331,6 @@ jobs:
 
       - name: L3統合テスト
         working-directory: packages/fluse_server
+        env:
+          FLUSE_REQUIRE_L3: "1"
         run: xvfb-run -a dart test test/reload_pipeline_l3_integration_test.dart -r expanded

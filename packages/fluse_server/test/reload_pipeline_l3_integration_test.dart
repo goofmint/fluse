@@ -11,6 +11,8 @@ import 'package:fluse_server/fluse_server.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
+import 'integration_prerequisites.dart';
+
 import 'l3_flutter_run_harness.dart';
 
 /// 実 Flutter プロセスに対する L3 統合テスト（設計 §7.2、Task 6.2）。
@@ -254,14 +256,10 @@ void main() {
   });
 
   /// 前提が揃っていなければスキップする。
-  HotReloadOrchestrator? ensureReady() {
-    final String? reason = skipReason;
-    if (reason != null) {
-      markTestSkipped(reason);
-      return null;
-    }
-    return orchestrator;
-  }
+  HotReloadOrchestrator? ensureReady() =>
+      ensurePrerequisiteReason(skipReason, requireEnv: 'FLUSE_REQUIRE_L3')
+      ? orchestrator
+      : null;
 
   /// 1サイクル分を記録する。opt-in の時だけ目標との比較で落とす。
   void record(HotReloadResult result) {

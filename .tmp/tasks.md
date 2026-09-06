@@ -512,10 +512,11 @@
 
 #### Task 7.2: CI の構築
 
-- [ ] GitHub Actions: `melos run analyze` / `melos run test`
-- [ ] Kotlin 側の JUnit 実行
-- [ ] Dart 版と Kotlin 版の `protocolVersion` 突合（設計 §9.1）
-- [ ] L1 / L2 / L3 統合テストの実行（L4 は除外）
+- [x] GitHub Actions: `melos run analyze` / `melos run test`（`dart` ジョブ）
+- [x] Kotlin 側の JUnit 実行（`kotlin` ジョブ）
+- [x] Dart 版と Kotlin 版の `protocolVersion` 突合（設計 §9.1、`protocol-version` ジョブ）
+- [x] L1 / L2 / L3 統合テストの実行（L4 は除外）。前提が揃わない時に自己スキップして緑にならないよう、各ジョブで `FLUSE_REQUIRE_L1` / `L2` / `L3` を立てる
+- チケットに無い追加ジョブ: `runtime-android`（Android 単体テスト）、`release-manifest`（release に fluse の痕跡が無いことの検査、設計 §10-4）
 - **完了条件**: PR で全チェックが自動実行される
 - **依存**: Task 2.5, Task 6.1, Task 6.2
 - **推定時間**: 3h
