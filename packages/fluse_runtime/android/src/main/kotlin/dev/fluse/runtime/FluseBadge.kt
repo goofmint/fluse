@@ -43,6 +43,11 @@ internal class FluseBadge(
         message: String,
     ) = moveTo(FluseBadgeState.REJECTED)
 
+    override fun onCleartextBlocked(
+        host: String,
+        message: String,
+    ) = moveTo(FluseBadgeState.REJECTED)
+
     override fun onMessage(message: FluseMessage) = Unit
 
     private fun moveTo(next: FluseBadgeState) {

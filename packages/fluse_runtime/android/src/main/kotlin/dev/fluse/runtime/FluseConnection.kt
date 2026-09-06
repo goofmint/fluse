@@ -45,6 +45,16 @@ interface FluseConnectionListener {
     /** 切れた。再接続は [FluseConnection] が自分で行う。 */
     fun onDisconnected()
 
+    /**
+     * 端末の設定で `ws://` が塞がれている（設計 §10-4）。
+     *
+     * 既定では何もしない。気にする側だけが受ければよい。
+     */
+    fun onCleartextBlocked(
+        host: String,
+        message: String,
+    ) = Unit
+
     /** 受理後に届いた制御メッセージ。`reload` などは後続タスクが使う。 */
     fun onMessage(message: FluseMessage)
 }
@@ -204,6 +214,16 @@ class FluseConnection internal constructor(
         endpoint: FluseEndpoint,
         pairingToken: String? = null,
     ) {
+        // **繋ぎに行く前に確かめる。** 塞がれていると OkHttp が平文を
+        // 拒んで例外になるだけで、理由が出ない。バックオフで延々と
+        // 繋ぎ直すことにもなる。
+        if (!FluseCleartext.isPermitted(endpoint.host)) {
+            val message = FluseCleartext.blockedMessage(endpoint.host)
+            Log.e(TAG, message)
+            notifyListeners { it.onCleartextBlocked(endpoint.host, message) }
+            return
+        }
+
         val target =
             synchronized(lock) {
                 closeSocketLocked("繋ぎ直します")

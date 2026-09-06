@@ -157,6 +157,61 @@ jobs:
         working-directory: examples/counter_app/android
         run: gradle :fluse_runtime:testDebugUnitTest --no-daemon
 
+  # release ビルドが fluse に汚されていないこと（Task 4.6 / 設計 §10-4）。
+  #
+  # **人の目で確かめ続けられない。** 権限や Activity を `src/main` に置いて
+  # しまえば release にも載るが、debug しか動かさない普段の作業では気づけない。
+  # 混ざった瞬間に落ちるようにしておく。
+  release-manifest:
+    name: release に fluse の痕跡が無い
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14"
+
+      - name: 依存解決
+        working-directory: examples/counter_app
+        run: flutter pub get
+
+      - name: release ビルド
+        working-directory: examples/counter_app
+        run: flutter build apk --release
+
+      # 統合後のマニフェストを直接見る。aapt を通さずに済み、
+      # 落ちた時に中身をそのまま出せる。
+      - name: マニフェストの検査
+        working-directory: examples/counter_app
+        run: |
+          set -eu
+          manifest=$(find build/app/intermediates/merged_manifest/release \
+            -name AndroidManifest.xml | head -1)
+          if [ -z "$manifest" ]; then
+            echo "release の統合マニフェストが見つかりません" >&2
+            exit 1
+          fi
+          echo "検査対象: $manifest"
+          if grep -i -e fluse -e usesCleartextTraffic -e permission.CAMERA "$manifest"; then
+            echo "" >&2
+            echo "release のマニフェストに fluse の宣言が混ざっています。" >&2
+            echo "宣言は src/debug/AndroidManifest.xml へ置くこと（設計 §10-4）。" >&2
+            exit 1
+          fi
+          echo "痕跡はありません"
+
   # 言語をまたぐ L1統合テスト（Task 2.5）。Dart と JDK の両方が要るため、
   # dart / kotlin ジョブとは別に1ランナーへ揃える。
   #

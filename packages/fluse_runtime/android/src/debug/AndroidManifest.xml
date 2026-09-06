@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  **debug バリアントにだけ入る。** ここに書いたものは release の
+  マニフェストには現れない（設計 §10-4）。
+
+  fluse は dev_dependency なので本来 release には含まれないが、
+  権限と平文許可を main へ置くと、構成次第で release にも載りうる。
+  「入らないはず」ではなく「入れられない」形にしておく。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- サーバへの WebSocket。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      QR の読み取り（設計 §4.2(a)）。
+
+      **無くても使えるようにしてある。** 断られた端末とカメラの無い端末は
+      手入力に落とす。required="true" にすると、カメラの無い端末に
+      アプリを入れられなくなる。
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+
+    <!--
+      **`ws://` は API 28 以降で既定で拒否される。**（設計 §10-4）
+
+      平文で流すのは Phase1 の明示的な設計判断（設計 §6.1）。LAN 内に
+      閉じることを唯一の境界としている。
+
+      `tools:replace` を付けるのは、利用者のアプリが値を持たない時に
+      こちらの true を通すため。**利用者が自分で宣言していればそちらが勝つ。**
+      マニフェストの優先順位はアプリ側が上で、ライブラリからは覆せない。
+      その場合は実行時に FluseCleartext が気づいて理由を出す。
+    -->
+    <application
+        android:usesCleartextTraffic="true"
+        tools:replace="android:usesCleartextTraffic">
+
+        <!--
+          プロセス起動時に自分から動き出すための入口（設計 §2.2.5）。
+
+          ContentProvider を使うのは、**利用者のマニフェストに手を入れずに
+          済ませる**ため。Application クラスの差し替えを求めると、既に独自の
+          Application を持つアプリで衝突する。
+
+          authority は端末内で一意でなければならない。同じ端末に複数の
+          Preview App が入りうるので、利用側の applicationId を前に付ける。
+        -->
+        <provider
+            android:name="dev.fluse.runtime.FluseInitProvider"
+            android:authorities="${applicationId}.fluseinitprovider"
+            android:exported="false"
+            android:initOrder="100" />
+
+        <!--
+          ペアリング画面（設計 §2.2.5）。
+
+          exported="false" にする。**外から起動できてはいけない。**
+          呼べる相手は繋ぎ先を指定でき、任意のサーバへ端末を向けられる。
+        -->
+        <activity
+            android:name="dev.fluse.runtime.FluseConnectActivity"
+            android:exported="false"
+            android:label="fluse"
+            android:screenOrientation="portrait" />
+    </application>
+</manifest>
