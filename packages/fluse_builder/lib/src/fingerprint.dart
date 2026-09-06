@@ -107,7 +107,7 @@ final class Fingerprint {
     return Fingerprint(
       entries: Map<String, String>.unmodifiable(<String, String>{
         keyFlutterRevision: _hash(sdk.revision),
-        keyPubspecLock: await _hashFile(p.join(root, 'pubspec.lock')),
+        keyPubspecLock: await _hashRequiredFile(p.join(root, 'pubspec.lock')),
         keyPubspecAssets: _hashAssets(p.join(root, 'pubspec.yaml')),
         keyPlugins: _hashPlugins(p.join(root, '.flutter-plugins-dependencies')),
         keyAndroidManifest: await _hashFiles(_androidManifests(root), root),
@@ -190,7 +190,7 @@ final class Fingerprint {
 
     return Fingerprint(
       entries: Map<String, String>.unmodifiable(entries),
-      nativeStamp: stamp as String?,
+      nativeStamp: stamp is String ? stamp : null,
       schemaVersion: version,
     );
   }
@@ -243,7 +243,8 @@ final class Fingerprint {
   static String _hashAssets(String pubspecPath) {
     final File file = File(pubspecPath);
     if (!file.existsSync()) {
-      return empty;
+      // Flutter プロジェクトに必ずある。無いのは異常。
+      throw FingerprintException('指紋の対象が見つかりません', path: pubspecPath);
     }
 
     final Object? document;
@@ -389,9 +390,13 @@ final class Fingerprint {
       final List<FileSystemEntity> children;
       try {
         children = current.listSync(followLinks: false);
-      } on FileSystemException {
-        // 読めないディレクトリで全体を落とさない。
-        continue;
+      } on FileSystemException catch (error) {
+        // **黙って飛ばさない。** その配下の変更が指紋に入らなくなり、
+        // 直したのに反映されない理由が分からなくなる。
+        throw FingerprintException(
+          'ディレクトリを辿れません: ${error.message}',
+          path: current.path,
+        );
       }
       for (final FileSystemEntity entity in children) {
         if (entity is Directory) {
@@ -465,10 +470,14 @@ final class Fingerprint {
     return node;
   }
 
-  static Future<String> _hashFile(String path) async {
+  /// 必ずあるはずのファイルをハッシュする。
+  ///
+  /// **無ければ [empty] に倒さない。** 「対象が1つも無い」と同じ値になり、
+  /// 欠けていること自体に気づけないまま指紋が成立してしまう。
+  static Future<String> _hashRequiredFile(String path) async {
     final File file = File(path);
     if (!file.existsSync()) {
-      return empty;
+      throw FingerprintException('指紋の対象が見つかりません', path: path);
     }
     return sha256.convert(await file.readAsBytes()).toString();
   }

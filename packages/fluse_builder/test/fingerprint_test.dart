@@ -219,11 +219,39 @@ flutter:
   group('android.native の一次判定', () {
     test('触られていなければ中身を読み直さない', () async {
       // res/ は数千ファイルになる。毎回読むと起動のたびに待たされる。
+      //
+      // **前回値と同じかを見るだけでは足りない。** 読み直しても同じ値に
+      // なるため、省略経路を消してもテストが通ってしまう。前回値だと
+      // 分かる印を入れて、それが返るかを見る。
       final Fingerprint before = await compute();
+      const String marker = 'reused-marker';
+      final Fingerprint marked = Fingerprint(
+        entries: <String, String>{
+          ...before.entries,
+          Fingerprint.keyAndroidNative: marker,
+        },
+        nativeStamp: before.nativeStamp,
+      );
 
-      final Fingerprint after = await compute(previous: before);
+      final Fingerprint after = await compute(previous: marked);
 
       expect(after.nativeStamp, before.nativeStamp);
+      expect(after.entries[Fingerprint.keyAndroidNative], marker);
+    });
+
+    test('合成ハッシュが違えば前回値を使わない', () async {
+      // 印だけを渡しても、stamp が食い違えば読み直すはず。
+      final Fingerprint before = await compute();
+      final Fingerprint stale = Fingerprint(
+        entries: <String, String>{
+          ...before.entries,
+          Fingerprint.keyAndroidNative: 'reused-marker',
+        },
+        nativeStamp: 'ちがうスタンプ',
+      );
+
+      final Fingerprint after = await compute(previous: stale);
+
       expect(
         after.entries[Fingerprint.keyAndroidNative],
         before.entries[Fingerprint.keyAndroidNative],
@@ -265,6 +293,25 @@ flutter:
       expect((await compute()).diff(before), <String>[
         Fingerprint.keyAndroidNative,
       ]);
+    });
+  });
+
+  group('欠けているもの', () {
+    test('pubspec.lock が無ければ弾く', () async {
+      // 「対象が1つも無い」と同じ値に倒すと、欠けていること自体に
+      // 気づけないまま指紋が成立する。
+      File(p.join(temp.path, 'pubspec.lock')).deleteSync();
+
+      await expectLater(
+        compute(),
+        throwsA(
+          isA<FingerprintException>().having(
+            (FingerprintException e) => e.path,
+            'path',
+            contains('pubspec.lock'),
+          ),
+        ),
+      );
     });
   });
 
