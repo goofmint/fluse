@@ -501,11 +501,11 @@
 
 #### Task 7.1: ドキュメント整備
 
-- [ ] ルート `README.md`（コンセプト / インストール / クイックスタート）
-- [ ] **平文WebSocketのリスクを明記**（設計 §6.1、信頼できるLAN前提であること）
-- [ ] Phase1 のスコープ外（iOS / **`fluse` による能動的な Hot Restart トリガ** / マルチデバイス / TLS）を明記。IDE 等ユーザー操作による Hot Restart 後の接続維持は Phase1 のスコープ**内**である旨もあわせて書く（設計 §10-6）
-- [ ] 各パッケージの `README.md` と `CHANGELOG.md`
-- [ ] トラブルシューティング（署名衝突 / cleartext / APP_OUTDATED）
+- [x] ルート `README.md`（コンセプト / インストール / クイックスタート）
+- [x] **平文WebSocketのリスクを明記**（設計 §6.1、信頼できるLAN前提であること）
+- [x] Phase1 のスコープ外（iOS / **`fluse` による能動的な Hot Restart トリガ** / マルチデバイス / TLS）を明記。IDE 等ユーザー操作による Hot Restart 後の接続維持は Phase1 のスコープ**内**である旨もあわせて書く（設計 §10-6）
+- [x] 各パッケージの `README.md` と `CHANGELOG.md`（`fluse_protocol_kt` は既存）
+- [x] トラブルシューティング（署名衝突 / cleartext / APP_OUTDATED / adb 不在時の APK 配信）
 - **完了条件**: 未経験者が README だけで実機に接続できる
 - **依存**: Task 6.3
 - **推定時間**: 4h
