@@ -14,6 +14,12 @@
     <string name="fluse_token_hint">トークン</string>
     <string name="fluse_connect">接続する</string>
 
+    <string name="fluse_badge_connecting">fluse: 接続中</string>
+    <string name="fluse_badge_connected">fluse: 接続済み</string>
+    <string name="fluse_badge_disconnected">fluse: 切断</string>
+    <string name="fluse_badge_pairing">fluse: 要ペアリング</string>
+    <string name="fluse_badge_rejected">fluse: 接続不可</string>
+
     <string name="fluse_error_not_fluse">fluse の QR ではありません</string>
     <string name="fluse_error_malformed">QR の内容を読み取れませんでした</string>
     <string name="fluse_error_protocol">サーバとアプリのバージョンが違います。fluse を揃えてください</string>

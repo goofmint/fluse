@@ -42,7 +42,7 @@ internal class FluseConnectionTest {
                 scheduler = scheduler,
             )
         val listener = RecordingListener()
-        connection.listener = listener
+        connection.addListener(listener)
         return Fixture(store, sockets, scheduler, connection, listener)
     }
 

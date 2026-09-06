@@ -137,7 +137,7 @@ class FluseConnectActivity :
         analysisExecutor?.shutdown()
         // **listener を外す。** 閉じた画面を掴んだままだと、以後の接続の
         // 通知が届き続け、Activity が解放されない。
-        FluseConnection.instance?.let { if (it.listener === this) it.listener = null }
+        FluseConnection.instance?.removeListener(this)
     }
 
     // ------------------------------------------------------------------ カメラ
@@ -263,7 +263,7 @@ class FluseConnectActivity :
 
         try {
             val connection = FluseConnection.getOrCreate(application, opened)
-            connection.listener = this
+            connection.addListener(this)
             // **例外の外に置かない。** connect はその場でソケットを開き、
             // 繋ぎ先が URL として壊れていれば投げる。ここで抜けると
             // connecting が立ったままになり、二度と入力を受け付けない。

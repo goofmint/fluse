@@ -58,6 +58,11 @@ class FluseInitProvider : ContentProvider() {
             return true
         }
 
+        // **エラー表示は Dart より先に立てる。** コンパイルが通らなければ
+        // Dart isolate は起動せず、Flutter 側からは何も描けない（設計 §5.2）。
+        application.registerActivityLifecycleCallbacks(FluseForeground)
+        FluseSurfaces.start()
+
         val callbacks = FluseActivityLifecycle(application)
         application.registerActivityLifecycleCallbacks(callbacks)
         lifecycle = callbacks

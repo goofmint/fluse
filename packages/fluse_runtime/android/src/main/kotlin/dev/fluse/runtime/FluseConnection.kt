@@ -171,8 +171,25 @@ class FluseConnection internal constructor(
     /** 今のセッションで送り終えた URI。同じ値なら送り直さない。 */
     private var sentVmServiceUri: String? = null
 
-    @Volatile
-    var listener: FluseConnectionListener? = null
+    /**
+     * 出来事を受け取る面々。
+     *
+     * **1つに絞れない。** ペアリング画面・エラーオーバーレイ・バッジが
+     * 同時に見ている。1枠にすると、後から入った側が前の側を追い出す。
+     */
+    private val listeners = java.util.concurrent.CopyOnWriteArraySet<FluseConnectionListener>()
+
+    fun addListener(listener: FluseConnectionListener) {
+        listeners.add(listener)
+    }
+
+    fun removeListener(listener: FluseConnectionListener) {
+        listeners.remove(listener)
+    }
+
+    private fun notifyListeners(action: (FluseConnectionListener) -> Unit) {
+        listeners.forEach(action)
+    }
 
     /** 受理済みか。 */
     val isAuthenticated: Boolean get() = synchronized(lock) { sessionId != null }
@@ -311,7 +328,7 @@ class FluseConnection internal constructor(
                     Log.w(TAG, "受理前の制御メッセージを無視しました: ${message.type}")
                     return
                 }
-                listener?.onMessage(message)
+                notifyListeners { it.onMessage(message) }
             }
         }
     }
@@ -342,7 +359,7 @@ class FluseConnection internal constructor(
         }
 
         Log.i(TAG, "接続しました: ${accept.sessionId}")
-        listener?.onConnected(accept.sessionId)
+        notifyListeners { it.onConnected(accept.sessionId) }
         resend?.let { vmServiceReady(it) }
     }
 
@@ -360,10 +377,10 @@ class FluseConnection internal constructor(
         if (reject.knownCode == RejectCode.AUTH_FAILED) {
             // 持っているトークンでは通らない。残すと次回も同じ所で止まる。
             store.deviceToken = null
-            listener?.onNeedsPairing(reject.message)
+            notifyListeners { it.onNeedsPairing(reject.message) }
             return
         }
-        listener?.onRejected(reject.code, reject.message)
+        notifyListeners { it.onRejected(reject.code, reject.message) }
     }
 
     private fun handleClose(close: CloseMessage) {
@@ -393,7 +410,7 @@ class FluseConnection internal constructor(
                 sentVmServiceUri = null
                 if (stopped) null else backoff.next()
             }
-        listener?.onDisconnected()
+        notifyListeners { it.onDisconnected() }
         if (delayMs == null) {
             return
         }
