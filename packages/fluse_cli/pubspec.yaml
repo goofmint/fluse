@@ -1,8 +1,20 @@
 name: fluse_cli
 description: fluse コマンド本体。init / start / rebuild / doctor / devices の解析、QR 描画、コンソールUI、ライフサイクル統括を担う。
 version: 0.1.0
-# pub.dev への公開は Task 7.3 でまとめて解禁する。
-publish_to: none
+homepage: https://github.com/goofmint/fluse
+repository: https://github.com/goofmint/fluse/tree/main/packages/fluse_cli
+issue_tracker: https://github.com/goofmint/fluse/issues
+
+topics:
+  - flutter
+  - hot-reload
+  - cli
+  - android
+
+# `dart pub global activate fluse_cli` で `fluse` として呼べるようにする。
+# **これが無いと `fluse` は生えない。** bin/ に置くだけでは名前が付かない。
+executables:
+  fluse: fluse
 
 environment:
   sdk: ^3.9.0

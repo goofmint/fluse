@@ -22,6 +22,17 @@ melos:
   # ワークスペース名はルートパッケージの `name`（fluse_workspace）を使う。
   # melos.name を別に持つと表示名が二重管理になるため定義しない。
 
+  # **5つのパッケージは同じ版で動く。** 互いを `^0.1.0` で参照しており、
+  # ワイヤ表現（fluse_protocol）を変えればサーバも端末も追従する必要がある。
+  # 個別に版を刻むと、どの組み合わせが動くのかを人が覚えることになる。
+  versioning: fixed
+
+  command:
+    version:
+      # ワークスペース横断の変更履歴も作る。パッケージ個別の CHANGELOG だけだと
+      # 「この版で何が変わったか」を5ファイル開いて回ることになる。
+      workspaceChangelog: true
+
   scripts:
     analyze:
       description: 全パッケージを静的解析する。info / warning も失敗として扱う。

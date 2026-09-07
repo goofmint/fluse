@@ -523,10 +523,10 @@
 
 #### Task 7.3: pub.dev 公開準備
 
-- [ ] 全パッケージの `pubspec.yaml` にメタデータ（description / repository / issue_tracker）
-- [ ] LICENSE の配置
-- [ ] `dart pub publish --dry-run` を全パッケージで通す
-- [ ] melos によるバージョン一括管理の設定
+- [x] 全パッケージの `pubspec.yaml` にメタデータ（description / homepage / repository / issue_tracker / topics）。`fluse_cli` には `executables` も
+- [x] LICENSE の配置（MIT。ルートと公開対象5パッケージ）
+- [x] `dart pub publish --dry-run` を全パッケージで通す（**5パッケージすべて警告0**）
+- [x] melos によるバージョン一括管理の設定（`versioning: fixed` + `workspaceChangelog`）
 - **完了条件**: 全パッケージが `--dry-run` で警告0
 - **依存**: Task 7.1
 - **推定時間**: 3h

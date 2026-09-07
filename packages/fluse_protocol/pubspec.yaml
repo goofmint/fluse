@@ -1,8 +1,14 @@
 name: fluse_protocol
-description: fluse のサーバとランタイムが交わす制御メッセージとトンネルフレームの定義・符号化・バージョンネゴシエーション。
+description: fluse のサーバとランタイムが交わす制御メッセージとトンネルフレームの定義・符号化・バージョンネゴシエーション。Kotlin 実装と同一のワイヤ表現を持つ。
 version: 0.1.0
-# pub.dev への公開は Task 7.3 でまとめて解禁する。
-publish_to: none
+homepage: https://github.com/goofmint/fluse
+repository: https://github.com/goofmint/fluse/tree/main/packages/fluse_protocol
+issue_tracker: https://github.com/goofmint/fluse/issues
+
+topics:
+  - flutter
+  - hot-reload
+  - protocol
 
 environment:
   sdk: ^3.9.0
