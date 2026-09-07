@@ -1,8 +1,14 @@
 name: fluse_server
 description: 増分コンパイル・DevFS 転送・VM Service 制御・TCP トンネル・WebSocket サーバ・セッション管理を担う開発PC側サーバ。
 version: 0.1.0
-# pub.dev への公開は Task 7.3 でまとめて解禁する。
-publish_to: none
+homepage: https://github.com/goofmint/fluse
+repository: https://github.com/goofmint/fluse/tree/main/packages/fluse_server
+issue_tracker: https://github.com/goofmint/fluse/issues
+
+topics:
+  - flutter
+  - hot-reload
+  - devtools
 
 environment:
   sdk: ^3.9.0

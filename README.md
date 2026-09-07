@@ -69,6 +69,9 @@ $ export PATH="$PATH:$HOME/.pub-cache/bin"
 $ dart pub global activate fluse_cli
 ```
 
+`fluse_cli` は `executables` で `fluse` を宣言しているので、これだけで
+`fluse` コマンドが生える。
+
 ## 使う
 
 ### 1. Preview App を作って入れる
@@ -323,6 +326,28 @@ $ dart run melos:melos run format   # 整形の検査
 
 - 手動の検証手順: [`docs/e2e-checklist.md`](docs/e2e-checklist.md)
 - 性能の計測結果: [`.tmp/perf-result.md`](.tmp/perf-result.md)
+
+### リリース
+
+**5つのパッケージは同じ版で動く。** 互いを `^0.1.0` で参照しており、ワイヤ表現
+（`fluse_protocol`）を変えればサーバも端末も追従する必要がある。個別に版を刻むと、
+どの組み合わせが動くのかを人が覚えることになる。melos の `versioning: fixed` で
+揃えてある。
+
+```console
+$ dart run melos:melos version          # 版を上げ、依存の制約と CHANGELOG を更新
+$ dart run melos:melos publish --dry-run
+$ dart run melos:melos publish          # 実際に出す
+```
+
+`melos version` は各パッケージの `^x.y.z` も一緒に書き換える。手で直さない。
+
+公開の順序は依存の向きに従う（`fluse_protocol` → `fluse_builder` /
+`fluse_server` → `fluse_cli`）。**先に依存先が pub.dev に無いと、後続の公開が
+解決に失敗する。** `melos publish` はこの順序を見て並べる。
+
+`fluse_runtime` は Flutter プラグイン。`dart pub publish` ではなく
+`flutter pub publish` を使う。
 
 ### CI
 
