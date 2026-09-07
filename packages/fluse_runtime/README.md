@@ -52,6 +52,7 @@ Dart 側は `flutter test`。
 
 ## 公開
 
-pub.dev へ公開できる状態にしてある（`dart pub publish --dry-run` が警告0）。
+pub.dev へ公開できる状態にしてある（`flutter pub publish --dry-run` が警告0）。
+**Flutter プラグインなので `dart pub publish` ではない。**
 版は5パッケージ揃えて上げる。手順はリポジトリ直下の
 [README](../../README.md#リリース) にある。
