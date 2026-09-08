@@ -447,6 +447,29 @@ void main() {
 
       expect(await runStart(arguments: <String>['--port', 'にせん']), 1);
     });
+
+    test('--platform が効く', () async {
+      await saveState();
+
+      await runStart(arguments: <String>['--platform', 'ios']);
+
+      expect(started?.request.platform, FluseTargetPlatform.ios);
+    });
+
+    test('--platform を指定しなければ fluse.yaml か既定値', () async {
+      await saveState();
+
+      await runStart();
+
+      expect(started?.request.platform, FluseConfig.defaultPlatform);
+    });
+
+    test('android / ios 以外の --platform は弾く', () async {
+      await saveState();
+
+      expect(await runStart(arguments: <String>['--platform', 'windows']), 1);
+      expect(started, isNull);
+    });
   });
 }
 

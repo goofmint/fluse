@@ -120,6 +120,15 @@ void main() {
       expect((config! as Map<Object?, Object?>)['target'], 'lib/other.dart');
     });
 
+    test('--platform を指定しなければ android を残す（後方互換）', () async {
+      await runInit();
+
+      final Object? config = loadYaml(
+        File(p.join(temp.path, 'fluse.yaml')).readAsStringSync(),
+      );
+      expect((config! as Map<Object?, Object?>)['platform'], 'android');
+    });
+
     test('pub get はエントリポイントを作った後に回す', () async {
       // 先に回すと、足した fluse_runtime が
       // .flutter-plugins-dependencies に載らない。
@@ -166,6 +175,21 @@ void main() {
 
       expect(await runInit(arguments: <String>['--device', 'ZZZ']), 1);
       expect(steps.installedTo, isNull);
+    });
+
+    test('--platform が既定値より優先されて fluse.yaml に残る', () async {
+      await runInit(arguments: <String>['--platform', 'ios']);
+
+      final Object? config = loadYaml(
+        File(p.join(temp.path, 'fluse.yaml')).readAsStringSync(),
+      );
+      expect((config! as Map<Object?, Object?>)['platform'], 'ios');
+    });
+
+    test('android / ios 以外の --platform は弾く', () async {
+      expect(await runInit(arguments: <String>['--platform', 'windows']), 1);
+      // 弾かれた時点で止まる。ビルドまで進まない。
+      expect(steps.ran('build apk'), isFalse);
     });
   });
 
