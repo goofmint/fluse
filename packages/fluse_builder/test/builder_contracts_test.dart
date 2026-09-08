@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:fluse_builder/fluse_builder.dart';
 import 'package:fluse_protocol/fluse_protocol.dart';
@@ -138,8 +140,8 @@ void main() {
       final KeystoreInfo keystore = KeystoreInfo(
         file: File(p.join(temp.path, 'keystore', 'fluse-debug.keystore')),
         alias: 'fluse-debug',
-        storePassword: 'store-pass',
-        keyPassword: 'key-pass',
+        storePassword: _secret(),
+        keyPassword: _secret(),
       );
 
       await builder.build(
@@ -193,4 +195,17 @@ void main() {
     expect(result.artifact, same(apk));
     expect(result.artifact, isA<File>());
   });
+}
+
+/// テスト用の使い捨てパスワード。
+///
+/// リテラルを置くと（ダミーでも）secret のハードコーディングになるため、
+/// preview_app_builder_test.dart と同じく実行時に生成する。
+String _secret() {
+  final Random random = Random.secure();
+  final List<int> bytes = List<int>.generate(
+    16,
+    (int _) => random.nextInt(256),
+  );
+  return base64Url.encode(bytes).replaceAll('=', '');
 }
