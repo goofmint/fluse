@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:fluse_builder/fluse_builder.dart';
 import 'package:fluse_protocol/fluse_protocol.dart';
@@ -137,9 +139,9 @@ void main() {
       );
       final KeystoreInfo keystore = KeystoreInfo(
         file: File(p.join(temp.path, 'keystore', 'fluse-debug.keystore')),
-        alias: 'fluse-debug',
-        storePassword: 'store-pass',
-        keyPassword: 'key-pass',
+        alias: _secret(),
+        storePassword: _secret(),
+        keyPassword: _secret(),
       );
 
       await builder.build(
@@ -193,4 +195,23 @@ void main() {
     expect(result.artifact, same(apk));
     expect(result.artifact, isA<File>());
   });
+}
+
+/// 使い捨ての秘密値の長さ。128 ビットあれば衝突を気にしなくてよい。
+const int _secretByteLength = 16;
+
+/// byte の値域の上限（排他）。[Random.nextInt] に渡す。
+const int _byteValueUpperBound = 256;
+
+/// テスト用の使い捨ての秘密値。パスワードと keystore の alias に使う。
+///
+/// リテラルを置くと（ダミーでも）secret のハードコーディングになるため、
+/// preview_app_builder_test.dart と同じく実行時に生成する。
+String _secret() {
+  final Random random = Random.secure();
+  final List<int> bytes = List<int>.generate(
+    _secretByteLength,
+    (int _) => random.nextInt(_byteValueUpperBound),
+  );
+  return base64Url.encode(bytes).replaceAll('=', '');
 }

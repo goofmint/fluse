@@ -40,3 +40,20 @@ pubspec_overrides.yaml
 
 # カバレッジ計測の出力
 coverage/
+
+# iOS のビルド生成物。Pods と Flutter/ephemeral は pod install /
+# flutter build が作り直すため追跡しない。
+# Generated.xcconfig と flutter_export_environment.sh は SDK の絶対パスを
+# 持つため環境依存（android/local.properties と同じ理由）。
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/ephemeral/
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/Flutter/App.framework/
+**/ios/Flutter/Flutter.framework/
+**/ios/Runner/GeneratedPluginRegistrant.*
+
+# Xcode のユーザー個別設定（スキーム順やブレークポイント）。
+**/xcuserdata/
