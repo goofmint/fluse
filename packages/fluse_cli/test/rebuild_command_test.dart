@@ -41,12 +41,15 @@ void main() {
   Future<int> runRebuild({List<String> arguments = const <String>[]}) {
     final RebuildCommand command = RebuildCommand(
       keystoreManager: KeystoreManager(processManager: steps, isWindows: false),
-      builderFactory: (FluseContext c) =>
-          PreviewAppBuilder(sdk: c.sdk, processManager: steps),
-      installerFactory: (FluseContext c) => DeviceInstaller(
-        processManager: steps,
-        onMessage: (String _) {},
-        readLine: () => '3',
+      builderFactory: (FluseContext c) => AndroidPreviewAppBuilder(
+        PreviewAppBuilder(sdk: c.sdk, processManager: steps),
+      ),
+      installerFactory: (FluseContext c) => AndroidDeviceInstaller(
+        DeviceInstaller(
+          processManager: steps,
+          onMessage: (String _) {},
+          readLine: () => '3',
+        ),
       ),
       onOutput: output.add,
     );
@@ -177,12 +180,15 @@ Future<int> _runInit(Directory root, Steps steps) {
     keystoreManager: KeystoreManager(processManager: steps, isWindows: false),
     pubGetRunnerFactory: (FluseContext c) =>
         PubGetRunner(sdk: c.sdk, processManager: steps),
-    builderFactory: (FluseContext c) =>
-        PreviewAppBuilder(sdk: c.sdk, processManager: steps),
-    installerFactory: (FluseContext c) => DeviceInstaller(
-      processManager: steps,
-      onMessage: (String _) {},
-      readLine: () => '3',
+    builderFactory: (FluseContext c) => AndroidPreviewAppBuilder(
+      PreviewAppBuilder(sdk: c.sdk, processManager: steps),
+    ),
+    installerFactory: (FluseContext c) => AndroidDeviceInstaller(
+      DeviceInstaller(
+        processManager: steps,
+        onMessage: (String _) {},
+        readLine: () => '3',
+      ),
     ),
   );
   return init.run(

@@ -51,8 +51,8 @@ final class InitCommand implements FluseCommand {
 
   /// テストから差し替えるための作り手。
   final PubGetRunner Function(FluseContext context) pubGetRunnerFactory;
-  final PreviewAppBuilder Function(FluseContext context) builderFactory;
-  final DeviceInstaller Function(FluseContext context) installerFactory;
+  final PreviewAppBuilderContract Function(FluseContext context) builderFactory;
+  final DeviceInstallerContract Function(FluseContext context) installerFactory;
 
   @override
   String get name => 'init';
@@ -148,8 +148,8 @@ final class InitCommand implements FluseCommand {
     required BuildResult build,
     required String? deviceSerial,
   }) async {
-    final DeviceInstaller installer = installerFactory(context);
-    final List<AndroidDevice> devices = await installer.listDevices();
+    final DeviceInstallerContract installer = installerFactory(context);
+    final List<FluseDevice> devices = await installer.listDevices();
 
     if (devices.isEmpty) {
       // **黙って終わらない。** APK は出来ているので、手で入れる道を示す。
@@ -164,7 +164,7 @@ final class InitCommand implements FluseCommand {
       return 1;
     }
 
-    final AndroidDevice? device = _pick(devices, deviceSerial);
+    final FluseDevice? device = _pick(devices, deviceSerial);
     if (device == null) {
       // **勝手に選ばない。** 別の端末を書き換えることになる。
       context.logger.error(
@@ -172,7 +172,7 @@ final class InitCommand implements FluseCommand {
             ? '端末が複数あります。--device で選んでください'
             : '指定された端末が見つかりません: $deviceSerial',
         fields: <String, Object?>{
-          'devices': devices.map((AndroidDevice d) => d.label).toList(),
+          'devices': devices.map((FluseDevice d) => d.name).toList(),
         },
       );
       return 1;
@@ -180,17 +180,17 @@ final class InitCommand implements FluseCommand {
 
     final InstallOutcome outcome = await installer.install(
       device: device,
-      apk: build.apk,
+      artifact: build.artifact,
       applicationId: build.applicationId,
       projectRoot: context.projectRoot,
     );
 
     switch (outcome) {
-      case Installed(:final AndroidDevice device):
+      case Installed(:final FluseDevice device):
         context.logger.info(
           '入りました',
           fields: <String, Object?>{
-            'device': device.label,
+            'device': device.name,
             'applicationId': build.applicationId,
           },
         );
@@ -213,10 +213,10 @@ final class InitCommand implements FluseCommand {
   }
 
   /// 入れる端末を決める。決められなければ null。
-  static AndroidDevice? _pick(List<AndroidDevice> devices, String? serial) {
+  static FluseDevice? _pick(List<FluseDevice> devices, String? serial) {
     if (serial != null) {
-      for (final AndroidDevice device in devices) {
-        if (device.serial == serial) {
+      for (final FluseDevice device in devices) {
+        if (device.id == serial) {
           return device;
         }
       }
@@ -286,16 +286,20 @@ final class InitCommand implements FluseCommand {
     onProgress: (String line) => context.logger.debug(line),
   );
 
-  static PreviewAppBuilder _defaultBuilder(FluseContext context) =>
-      PreviewAppBuilder(
-        sdk: context.sdk,
-        processManager: context.processManager,
-        onProgress: (String line) => context.logger.debug(line),
+  static PreviewAppBuilderContract _defaultBuilder(FluseContext context) =>
+      AndroidPreviewAppBuilder(
+        PreviewAppBuilder(
+          sdk: context.sdk,
+          processManager: context.processManager,
+          onProgress: (String line) => context.logger.debug(line),
+        ),
       );
 
-  static DeviceInstaller _defaultInstaller(FluseContext context) =>
-      DeviceInstaller(
-        processManager: context.processManager,
-        onMessage: (String line) => context.logger.info(line),
+  static DeviceInstallerContract _defaultInstaller(FluseContext context) =>
+      AndroidDeviceInstaller(
+        DeviceInstaller(
+          processManager: context.processManager,
+          onMessage: (String line) => context.logger.info(line),
+        ),
       );
 }

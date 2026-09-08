@@ -8,6 +8,7 @@ import 'package:yaml/yaml.dart';
 import 'package:yaml_edit/yaml_edit.dart';
 
 import 'android_device.dart';
+import 'builder_contracts.dart';
 import 'device_install_exception.dart';
 
 /// 署名がぶつかった時に利用者が選んだ道（設計 §5.3）。
@@ -31,7 +32,17 @@ sealed class InstallOutcome {
 final class Installed extends InstallOutcome {
   const Installed({required this.device, required this.reinstalled});
 
-  final AndroidDevice device;
+  /// **型は `AndroidDevice` ではなく `FluseDevice`。**
+  ///
+  /// `DeviceInstallerContract.install`（Task 10.2 / Issue #98）は
+  /// platform 非依存に `InstallOutcome` を返す契約になっており、後続の
+  /// `IosDeviceInstaller`（Issue #100）もこの `Installed` を作れる必要が
+  /// ある。`AndroidDevice` に固定したままでは iOS 側が作れない。
+  ///
+  /// **`DeviceInstaller`（本ファイル）内部でこの型を作る箇所は変えない。**
+  /// [install] は常に受け取った `AndroidDevice` をそのまま渡すので、
+  /// Android 経路の挙動・シグネチャはここでは変わらない。
+  final FluseDevice device;
 
   /// 既存を消してから入れ直したか。
   final bool reinstalled;

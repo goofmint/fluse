@@ -1,5 +1,7 @@
+import 'builder_contracts.dart';
+
 /// `adb devices -l` が返す端末1台（設計 §2.2.2）。
-final class AndroidDevice {
+final class AndroidDevice implements FluseDevice {
   const AndroidDevice({
     required this.serial,
     required this.model,
@@ -27,4 +29,23 @@ final class AndroidDevice {
 
   @override
   String toString() => 'AndroidDevice($label)';
+
+  // ---------------------------------------------------- FluseDevice（Issue #98）
+
+  /// [FluseDevice.id]。`adb -s` に渡す識別子は [serial] そのもの。
+  @override
+  String get id => serial;
+
+  /// [FluseDevice.name]。**[label] の値をそのまま返す。** CLI の表示を
+  /// 1文字も変えないため。
+  @override
+  String get name => label;
+
+  /// [FluseDevice.isSimulator]。
+  ///
+  /// **経験則。** `adb devices -l` はエミュレータの serial を
+  /// `emulator-<port>`（例: `emulator-5554`）の形で返す。これを判定する
+  /// 公式な API は無く、ここでは observed な命名規則から推測している。
+  @override
+  bool get isSimulator => serial.startsWith('emulator-');
 }
