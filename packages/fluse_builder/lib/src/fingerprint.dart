@@ -21,6 +21,7 @@ final class Fingerprint {
   const Fingerprint({
     required this.entries,
     this.nativeStamp,
+    this.iosNativeStamp,
     this.schemaVersion = currentSchemaVersion,
   });
 
@@ -39,6 +40,12 @@ final class Fingerprint {
   /// 読み直さずに前回の内容ハッシュを使い回せる（設計 §8.2-7）。
   final String? nativeStamp;
 
+  /// `ios.native` の一次判定に使う合成ハッシュ。
+  ///
+  /// [nativeStamp] と同じ作り。Android と iOS で対象のファイルが違うので、
+  /// 一次判定のスタンプも別々に持つ。
+  final String? iosNativeStamp;
+
   /// 読み込んだ形式の版。
   final int schemaVersion;
 
@@ -51,6 +58,9 @@ final class Fingerprint {
   static const String keyAndroidManifest = 'android.manifest';
   static const String keyAndroidGradle = 'android.gradle';
   static const String keyAndroidNative = 'android.native';
+  static const String keyIosPlist = 'ios.plist';
+  static const String keyIosPodfile = 'ios.podfile';
+  static const String keyIosNative = 'ios.native';
   static const String keyBuildFlags = 'build.flags';
 
   /// 指紋が見る対象。並びは設計 §2.2.2 の表と揃える。
@@ -62,6 +72,9 @@ final class Fingerprint {
     keyAndroidManifest,
     keyAndroidGradle,
     keyAndroidNative,
+    keyIosPlist,
+    keyIosPodfile,
+    keyIosNative,
     keyBuildFlags,
   ];
 
@@ -75,6 +88,8 @@ final class Fingerprint {
   ///
   /// **Gradle の生成物を入れてはいけない。** `build/` にはマージ済みの
   /// `AndroidManifest.xml` が置かれ、ビルドのたびに指紋が変わる。
+  /// `Pods` / `.symlinks` / `DerivedData` も同じ理由。CocoaPods と Xcode の
+  /// 生成物で、見てしまうと自分の生成物で変更を検出し続ける。
   /// `fluse_server` の `ChangeClassifier` と揃えてある。
   static const Set<String> ignoredDirs = <String>{
     'build',
@@ -84,6 +99,11 @@ final class Fingerprint {
     '.flutter_preview',
     '.git',
     '.idea',
+    'Pods',
+    '.symlinks',
+    'DerivedData',
+    // ios/Flutter/ephemeral。Flutter ツールが都度書き直す。
+    'ephemeral',
   };
 
   // ---------------------------------------------------------------- 計算
@@ -103,6 +123,7 @@ final class Fingerprint {
   }) async {
     final String root = project.root;
     final _NativeDigest native = await _computeNative(root, previous);
+    final _NativeDigest iosNative = await _computeIosNative(root, previous);
 
     return Fingerprint(
       entries: Map<String, String>.unmodifiable(<String, String>{
@@ -113,11 +134,15 @@ final class Fingerprint {
         keyAndroidManifest: await _hashFiles(_androidManifests(root), root),
         keyAndroidGradle: await _hashFiles(_gradleFiles(root), root),
         keyAndroidNative: native.content,
+        keyIosPlist: await _hashFiles(_iosPlists(root), root),
+        keyIosPodfile: await _hashFiles(_iosPodfiles(root), root),
+        keyIosNative: iosNative.content,
         // **並べ替えない。** `-D` は同じキーが複数あれば後勝ちで、
         // 順序が変われば結果も変わりうる（`BuildMeta.dartDefines` と同じ）。
         keyBuildFlags: _hash(buildFlags.join(' ')),
       }),
       nativeStamp: native.stamp,
+      iosNativeStamp: iosNative.stamp,
     );
   }
 
@@ -147,6 +172,7 @@ final class Fingerprint {
     'schemaVersion': schemaVersion,
     'entries': entries,
     if (nativeStamp != null) 'nativeStamp': nativeStamp,
+    if (iosNativeStamp != null) 'iosNativeStamp': iosNativeStamp,
   };
 
   static Fingerprint fromJson(Map<String, Object?> json) {
@@ -188,9 +214,15 @@ final class Fingerprint {
       throw const FingerprintException('nativeStamp が文字列ではありません');
     }
 
+    final Object? iosStamp = json['iosNativeStamp'];
+    if (iosStamp != null && iosStamp is! String) {
+      throw const FingerprintException('iosNativeStamp が文字列ではありません');
+    }
+
     return Fingerprint(
       entries: Map<String, String>.unmodifiable(entries),
       nativeStamp: stamp is String ? stamp : null,
+      iosNativeStamp: iosStamp is String ? iosStamp : null,
       schemaVersion: version,
     );
   }
@@ -334,6 +366,67 @@ final class Fingerprint {
       name == 'gradle.properties' ||
       name == 'gradle-wrapper.properties';
 
+  /// `ios/Runner/Info.plist` と、`ios/` 配下のその他の `*.plist`。
+  ///
+  /// **`Runner/Info.plist` だけに絞らない。** `GoogleService-Info.plist` の
+  /// ような追加の plist も設定を APK……もとい IPA へ焼き込む対象になる。
+  static List<File> _iosPlists(String root) {
+    final Directory ios = Directory(p.join(root, 'ios'));
+    if (!ios.existsSync()) {
+      return const <File>[];
+    }
+    return <File>[
+      for (final FileSystemEntity entity in _walk(ios))
+        if (entity is File && p.extension(entity.path) == '.plist') entity,
+    ];
+  }
+
+  /// `ios/Podfile` と `ios/Podfile.lock`。
+  static List<File> _iosPodfiles(String root) {
+    final List<File> files = <File>[];
+    final File podfile = File(p.join(root, 'ios', 'Podfile'));
+    if (podfile.existsSync()) {
+      files.add(podfile);
+    }
+    final File lock = File(p.join(root, 'ios', 'Podfile.lock'));
+    if (lock.existsSync()) {
+      files.add(lock);
+    }
+    return files;
+  }
+
+  /// `android.native` の対象と同じ発想の、iOS 側のネイティブ実装。
+  ///
+  /// `ios/Runner/` 配下の `.swift` / `.h` / `.m` と `Assets.xcassets`、
+  /// それに `ios/Runner.xcodeproj/project.pbxproj`。Storyboard や
+  /// `Info.plist` は [_iosPlists] や別の判定で拾うのでここには含めない。
+  static List<File> _iosNativeFiles(String root) {
+    final List<File> files = <File>[];
+    final Directory runner = Directory(p.join(root, 'ios', 'Runner'));
+    if (runner.existsSync()) {
+      for (final FileSystemEntity entity in _walk(runner)) {
+        if (entity is! File) {
+          continue;
+        }
+        final String ext = p.extension(entity.path);
+        final bool inAssets = p
+            .split(p.relative(entity.path, from: runner.path))
+            .contains('Assets.xcassets');
+        if (ext == '.swift' || ext == '.h' || ext == '.m' || inAssets) {
+          files.add(entity);
+        }
+      }
+    }
+
+    final File pbxproj = File(
+      p.join(root, 'ios', 'Runner.xcodeproj', 'project.pbxproj'),
+    );
+    if (pbxproj.existsSync()) {
+      files.add(pbxproj);
+    }
+    return files;
+  }
+
   /// `android.native` を二段構えで求める。
   static Future<_NativeDigest> _computeNative(
     String root,
@@ -374,6 +467,37 @@ final class Fingerprint {
     if (reused != null && previous?.nativeStamp == stamp) {
       // 触られていない。**中身は読まない。** res/ は数千ファイルになり、
       // 毎回読むと起動のたびに待たされる（設計 §8.2-7）。
+      return _NativeDigest(content: reused, stamp: stamp);
+    }
+
+    return _NativeDigest(content: await _hashFiles(files, root), stamp: stamp);
+  }
+
+  /// `ios.native` を二段構えで求める。[_computeNative] と同じ作り。
+  static Future<_NativeDigest> _computeIosNative(
+    String root,
+    Fingerprint? previous,
+  ) async {
+    final List<File> files = _iosNativeFiles(root)
+      ..sort((File a, File b) => a.path.compareTo(b.path));
+
+    // 一次判定。中身を読まずに済ませられるか見る。
+    final StringBuffer stampSource = StringBuffer();
+    for (final File file in files) {
+      final FileStat stat = file.statSync();
+      stampSource
+        ..write(_relative(file.path, root))
+        ..write(' ')
+        ..write(stat.modified.microsecondsSinceEpoch)
+        ..write(' ')
+        ..write(stat.size)
+        ..write('\n');
+    }
+    final String stamp = _hash(stampSource.toString());
+
+    final String? reused = previous?.entries[keyIosNative];
+    if (reused != null && previous?.iosNativeStamp == stamp) {
+      // 触られていない。**中身は読まない。**
       return _NativeDigest(content: reused, stamp: stamp);
     }
 
@@ -486,7 +610,7 @@ final class Fingerprint {
   String toString() => 'Fingerprint(${entries.length}キー)';
 }
 
-/// `android.native` の計算結果。
+/// `android.native` / `ios.native` の計算結果。
 final class _NativeDigest {
   const _NativeDigest({required this.content, required this.stamp});
 

@@ -53,6 +53,7 @@ void main() {
     Directory(
       p.join(root, 'android', 'app', 'src', 'main'),
     ).createSync(recursive: true);
+    Directory(p.join(root, 'ios', 'Runner')).createSync(recursive: true);
     File(p.join(root, 'pubspec.yaml')).writeAsStringSync('name: sample\n');
     File(p.join(root, 'pubspec.lock')).writeAsStringSync('{}\n');
 
@@ -232,6 +233,15 @@ void main() {
       () => expectOutdated('android/app/src/main/kotlin/Main.kt'),
     );
 
+    test('Info.plist', () => expectOutdated('ios/Runner/Info.plist'));
+
+    test('Podfile', () => expectOutdated('ios/Podfile'));
+
+    test(
+      'ios native ソース',
+      () => expectOutdated('ios/Runner/AppDelegate.swift'),
+    );
+
     test('停止後のイベントは処理しない', () async {
       final FileWatcher w1 = await start();
       final List<ChangeSet> changes = <ChangeSet>[];
@@ -284,9 +294,22 @@ void main() {
       expect(watched.where((String t) => t.endsWith('lib')), hasLength(1));
     });
 
+    test('ios を監視対象に含める', () async {
+      final FileWatcher created = FileWatcher(
+        projectRoot: root,
+        debounce: debounce,
+        watcherFactory: FakeWatchTarget.new,
+      );
+
+      final List<String> watched = created.watchTargets();
+
+      expect(watched.where((String t) => t.endsWith('ios')), hasLength(1));
+    });
+
     test('存在しないディレクトリは飛ばす', () async {
-      // android/ を持たないプロジェクトでも起動できる必要がある。
+      // android/ や ios/ を持たないプロジェクトでも起動できる必要がある。
       Directory(p.join(root, 'android')).deleteSync(recursive: true);
+      Directory(p.join(root, 'ios')).deleteSync(recursive: true);
       final FileWatcher created = FileWatcher(
         projectRoot: root,
         debounce: debounce,
@@ -295,6 +318,10 @@ void main() {
 
       expect(
         created.watchTargets().where((String t) => t.endsWith('android')),
+        isEmpty,
+      );
+      expect(
+        created.watchTargets().where((String t) => t.endsWith('ios')),
         isEmpty,
       );
     });

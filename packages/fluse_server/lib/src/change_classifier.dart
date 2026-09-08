@@ -104,6 +104,13 @@ final class ChangeClassifier {
     'res',
   };
 
+  /// `ios/Runner/` 配下で指紋対象になるソースの拡張子。
+  static const Set<String> fingerprintIosNativeExtensions = <String>{
+    '.swift',
+    '.h',
+    '.m',
+  };
+
   /// プロジェクト直下にあれば中身を見ないディレクトリ。
   ///
   /// ツールの出力先。ここを見ると自分の書き込みで変更を検出し続ける。
@@ -124,6 +131,18 @@ final class ChangeClassifier {
     'build',
     '.gradle',
     '.cxx',
+  };
+
+  /// `ios/` 配下にあれば中身を見ないディレクトリ。
+  ///
+  /// CocoaPods と Xcode の生成物。`build/` を除外しているのと同じ理由で、
+  /// ここを見ると自分の生成物で変更を検出し続けてしまう。
+  static const Set<String> generatedIosDirs = <String>{
+    'Pods',
+    '.symlinks',
+    'DerivedData',
+    // ios/Flutter/ephemeral。Flutter ツールが都度書き直す。
+    'ephemeral',
   };
 
   /// [path] の種類を返す。相対パスはプロジェクトルート基準で解決する。
@@ -176,20 +195,29 @@ final class ChangeClassifier {
     // Gradle はモジュールごとに build/ を持つ。深さは決め打ちできない。
     // lib/build/ のような利用者のディレクトリまで巻き込まないよう、
     // android/ の中だけを対象にする。
-    if (segments.first != 'android') {
+    if (segments.first == 'android') {
+      for (final String segment in segments.skip(1)) {
+        // **ソースセットに入ったら以降は見ない。** `build` は Java /
+        // Kotlin のパッケージ名として正当で、
+        // `android/app/src/main/java/com/example/build/` は利用者のソース。
+        // Gradle の出力がソースセットの中に置かれることはない。
+        if (segment == 'src') {
+          return false;
+        }
+        if (generatedAndroidDirs.contains(segment)) {
+          return true;
+        }
+      }
       return false;
     }
-    for (final String segment in segments.skip(1)) {
-      // **ソースセットに入ったら以降は見ない。** `build` は Java /
-      // Kotlin のパッケージ名として正当で、
-      // `android/app/src/main/java/com/example/build/` は利用者のソース。
-      // Gradle の出力がソースセットの中に置かれることはない。
-      if (segment == 'src') {
-        return false;
+    // CocoaPods / Xcode の生成物も同じ理由で ios/ の中だけを対象にする。
+    if (segments.first == 'ios') {
+      for (final String segment in segments.skip(1)) {
+        if (generatedIosDirs.contains(segment)) {
+          return true;
+        }
       }
-      if (generatedAndroidDirs.contains(segment)) {
-        return true;
-      }
+      return false;
     }
     return false;
   }
@@ -223,10 +251,16 @@ final class ChangeClassifier {
     if (fingerprintFiles.contains(relative)) {
       return true;
     }
-    if (!p.posix.isWithin('android', relative)) {
-      return false;
+    if (p.posix.isWithin('android', relative)) {
+      return _isAndroidFingerprintTarget(relative);
     }
+    if (p.posix.isWithin('ios', relative)) {
+      return _isIosFingerprintTarget(relative);
+    }
+    return false;
+  }
 
+  bool _isAndroidFingerprintTarget(String relative) {
     final String name = p.posix.basename(relative);
     if (fingerprintAndroidFileNames.contains(name)) {
       return true;
@@ -244,6 +278,33 @@ final class ChangeClassifier {
       if (rest.isNotEmpty && fingerprintNativeDirs.contains(rest.first)) {
         return true;
       }
+    }
+    return false;
+  }
+
+  /// `fingerprint.dart` の `ios.plist` / `ios.podfile` / `ios.native` と
+  /// 揃えてある。ここだけ直すと「変更したのに反映されない」になる。
+  bool _isIosFingerprintTarget(String relative) {
+    if (relative == 'ios/Podfile' || relative == 'ios/Podfile.lock') {
+      return true;
+    }
+    if (p.posix.extension(relative) == '.plist') {
+      return true;
+    }
+
+    // ios/Runner/**（.swift / .h / .m / Assets.xcassets 配下）
+    const String nativeRoot = 'ios/Runner';
+    if (p.posix.isWithin(nativeRoot, relative)) {
+      final String rest = p.posix.relative(relative, from: nativeRoot);
+      if (fingerprintIosNativeExtensions.contains(p.posix.extension(rest))) {
+        return true;
+      }
+      if (rest.split('/').contains('Assets.xcassets')) {
+        return true;
+      }
+    }
+    if (relative == 'ios/Runner.xcodeproj/project.pbxproj') {
+      return true;
     }
     return false;
   }

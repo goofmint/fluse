@@ -36,7 +36,7 @@ void main() {
   }
 
   group('指紋テーブル', () {
-    test('設計の8キーを揃える', () async {
+    test('設計のキーを揃える', () async {
       final Fingerprint print = await compute();
 
       expect(print.entries.keys.toSet(), Fingerprint.keys.toSet());
@@ -111,6 +111,49 @@ flutter:
           root,
           p.join('android', 'app', 'src', 'main', 'kotlin', 'Main.kt'),
           'class Main { fun run() {} }\n',
+        ),
+      ),
+      (
+        key: Fingerprint.keyIosPlist,
+        note: 'Info.plist が変わった',
+        change: (Directory root) => _write(
+          root,
+          p.join('ios', 'Runner', 'Info.plist'),
+          '<?xml version="1.0"?><plist><dict><key>CFBundleName</key>'
+          '<string>changed</string></dict></plist>\n',
+        ),
+      ),
+      (
+        key: Fingerprint.keyIosPodfile,
+        note: 'Podfile が変わった',
+        change: (Directory root) =>
+            _write(root, p.join('ios', 'Podfile'), "platform :ios, '13.0'\n"),
+      ),
+      (
+        key: Fingerprint.keyIosPodfile,
+        note: 'Podfile.lock が変わった',
+        change: (Directory root) => _write(
+          root,
+          p.join('ios', 'Podfile.lock'),
+          'PODS:\n  - added (1.0.0)\n',
+        ),
+      ),
+      (
+        key: Fingerprint.keyIosNative,
+        note: 'AppDelegate.swift が変わった',
+        change: (Directory root) => _write(
+          root,
+          p.join('ios', 'Runner', 'AppDelegate.swift'),
+          '@main\nclass AppDelegate: FlutterAppDelegate { func changed() {} }\n',
+        ),
+      ),
+      (
+        key: Fingerprint.keyIosNative,
+        note: 'project.pbxproj が変わった',
+        change: (Directory root) => _write(
+          root,
+          p.join('ios', 'Runner.xcodeproj', 'project.pbxproj'),
+          '// !\$*UTF8*\$! changed\n',
         ),
       ),
     ];
@@ -214,6 +257,42 @@ flutter:
 
       expect((await compute()).diff(before), isEmpty);
     });
+
+    test('CocoaPods / Xcode の生成物は見ない', () async {
+      // Pods/ や DerivedData/ を見てしまうと、自分の生成物で変更を
+      // 検出し続けることになる。CocoaPods は Pods-Runner-Info.plist の
+      // ような plist も吐くので、そのまま拾うと ios.plist が壊れる。
+      final Fingerprint before = await compute();
+
+      _write(
+        temp,
+        p.join(
+          'ios',
+          'Pods',
+          'Target Support Files',
+          'Pods-Runner',
+          'Pods-Runner-Info.plist',
+        ),
+        '<?xml version="1.0"?><plist><dict /></plist>\n',
+      );
+      _write(
+        temp,
+        p.join('ios', '.symlinks', 'plugins', 'foo', 'ios', 'foo.h'),
+        '// symlink 先\n',
+      );
+      _write(
+        temp,
+        p.join('ios', 'DerivedData', 'Build', 'Products', 'x.plist'),
+        '<?xml version="1.0"?><plist><dict /></plist>\n',
+      );
+      _write(
+        temp,
+        p.join('ios', 'Flutter', 'ephemeral', 'Flutter.podspec'),
+        'x\n',
+      );
+
+      expect((await compute()).diff(before), isEmpty);
+    });
   });
 
   group('android.native の一次判定', () {
@@ -293,6 +372,63 @@ flutter:
       expect((await compute()).diff(before), <String>[
         Fingerprint.keyAndroidNative,
       ]);
+    });
+  });
+
+  group('ios.native の一次判定', () {
+    test('触られていなければ中身を読み直さない', () async {
+      // パス・mtime・サイズが前回と一致すれば中身は読まない
+      // （設計 §8.2-7）。**前回値と同じかを見るだけでは足りない。**
+      // 読み直しても同じ値になるため、省略経路を消してもテストが
+      // 通ってしまう。前回値だと分かる印を入れて、それが返るかを見る。
+      final Fingerprint before = await compute();
+      const String marker = 'reused-marker';
+      final Fingerprint marked = Fingerprint(
+        entries: <String, String>{
+          ...before.entries,
+          Fingerprint.keyIosNative: marker,
+        },
+        nativeStamp: before.nativeStamp,
+        iosNativeStamp: before.iosNativeStamp,
+      );
+
+      final Fingerprint after = await compute(previous: marked);
+
+      expect(after.iosNativeStamp, before.iosNativeStamp);
+      expect(after.entries[Fingerprint.keyIosNative], marker);
+    });
+
+    test('合成ハッシュが違えば前回値を使わない', () async {
+      final Fingerprint before = await compute();
+      final Fingerprint stale = Fingerprint(
+        entries: <String, String>{
+          ...before.entries,
+          Fingerprint.keyIosNative: 'reused-marker',
+        },
+        nativeStamp: before.nativeStamp,
+        iosNativeStamp: 'ちがうスタンプ',
+      );
+
+      final Fingerprint after = await compute(previous: stale);
+
+      expect(
+        after.entries[Fingerprint.keyIosNative],
+        before.entries[Fingerprint.keyIosNative],
+      );
+    });
+
+    test('中身が変われば前回を使い回さない', () async {
+      final Fingerprint before = await compute();
+
+      _write(
+        temp,
+        p.join('ios', 'Runner', 'AppDelegate.swift'),
+        '@main\nclass AppDelegate: FlutterAppDelegate { func changed() {} }\n',
+      );
+      final Fingerprint after = await compute(previous: before);
+
+      expect(after.diff(before), <String>[Fingerprint.keyIosNative]);
+      expect(after.iosNativeStamp, isNot(before.iosNativeStamp));
     });
   });
 
@@ -501,6 +637,24 @@ android {
       'plugins': <String, Object?>{'android': <Object?>[]},
       'date_created': '2026-01-01 00:00:00.000',
     }),
+  );
+  _write(
+    root,
+    p.join('ios', 'Runner', 'Info.plist'),
+    '<?xml version="1.0"?><plist><dict><key>CFBundleName</key>'
+    '<string>counter_app</string></dict></plist>\n',
+  );
+  _write(root, p.join('ios', 'Podfile'), "platform :ios, '12.0'\n");
+  _write(root, p.join('ios', 'Podfile.lock'), 'PODS:\nPODFILE CHECKSUM: aaa\n');
+  _write(
+    root,
+    p.join('ios', 'Runner', 'AppDelegate.swift'),
+    '@main\nclass AppDelegate: FlutterAppDelegate {}\n',
+  );
+  _write(
+    root,
+    p.join('ios', 'Runner.xcodeproj', 'project.pbxproj'),
+    '// !\$*UTF8*\$!\n',
   );
 }
 
