@@ -44,6 +44,15 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# iOS のビルド生成物とローカル設定（CocoaPods / Xcode）。
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/ephemeral/
+**/ios/Flutter/Generated.xcconfig
+**/ios/**/*.xcworkspace/xcuserdata/
+DerivedData/
+
 # fluse の作業場所。**取り込まないこと。**
 # 接続用の secret と署名鍵が入る（設計 §10-7）。
 .flutter_preview/
