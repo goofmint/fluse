@@ -81,5 +81,14 @@ extension BuildResultArtifact on BuildResult {
   /// （`File`）だが、iOS の成果物は `.app` バンドル
   /// （`Directory`）になる。`PreviewAppBuilderContract.build` の戻り値を
   /// 両者で共通に扱えるよう、`BuildResult` 本体には触れずここで橋渡しする。
+  ///
+  /// **今はまだ `File` しか返らない。** 裏にいる [BuildResult.apk] が
+  /// `File` のままだからで、`.app` のディレクトリを載せられるのは
+  /// `IosPreviewAppBuilder`（Issue #99）で [BuildResult] を一般化して
+  /// からになる。ここを先に直そうとすると
+  /// `DeviceInstaller.install({required File apk})` のシグネチャまで
+  /// 変えることになり、「既存の具象クラスには手を入れない」という
+  /// Task 10.1 の前提が崩れる。**呼び出し側の型だけ先に広げておき、
+  /// 中身は Issue #99 で入れ替える。**
   FileSystemEntity get artifact => apk;
 }
