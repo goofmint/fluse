@@ -29,9 +29,11 @@ void main() {
     }
   });
 
-  FluseContext context() => FluseContext.of(
+  FluseContext context({
+    FluseTargetPlatform platform = FluseTargetPlatform.android,
+  }) => FluseContext.of(
     projectRoot: temp,
-    config: const FluseConfig(),
+    config: FluseConfig(platform: platform),
     sdk: _sdk,
     logger: FluseLogger(sinks: const <FluseLogSink>[]),
     processManager: steps,
@@ -231,6 +233,156 @@ void main() {
       expect(text(), contains('✗ devices.json'));
     });
   });
+
+  group('iOS のとき', () {
+    test('adb / keytool の検査が出ない', () async {
+      _writeInfoPlist(temp, hasUsageKey: true, hasAllowsLocalNetworking: true);
+
+      await runDoctor(on: context(platform: FluseTargetPlatform.ios));
+
+      expect(text(), isNot(contains('adb')));
+      expect(text(), isNot(contains('keytool')));
+    });
+
+    test('iOS 用の検査が並ぶ', () async {
+      _writeInfoPlist(temp, hasUsageKey: true, hasAllowsLocalNetworking: true);
+
+      final int code = await runDoctor(
+        on: context(platform: FluseTargetPlatform.ios),
+      );
+
+      expect(code, 0, reason: text());
+      for (final String name in <String>[
+        'Xcode',
+        'xcrun devicectl',
+        'ios/',
+        'Info.plist: NSLocalNetworkUsageDescription',
+        'Info.plist: NSAllowsLocalNetworking',
+        'pod',
+        // iOS でも Flutter SDK / ポート / .flutter_preview は共通で見る。
+        'Flutter SDK',
+        'ポート 8180',
+      ]) {
+        expect(text(), contains(name), reason: '$name を見ていない');
+      }
+    });
+
+    test('xcode-select が Command Line Tools のままなら切り替え方を案内する', () async {
+      _writeInfoPlist(temp, hasUsageKey: true, hasAllowsLocalNetworking: true);
+      steps.xcodeSelectPath = '/Library/Developer/CommandLineTools';
+
+      expect(
+        await runDoctor(on: context(platform: FluseTargetPlatform.ios)),
+        1,
+      );
+
+      expect(text(), contains('✗ Xcode'));
+      expect(text(), contains('CommandLineTools'));
+      expect(
+        text(),
+        contains(
+          'sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer',
+        ),
+      );
+    });
+
+    test('xcrun devicectl が無ければ指摘する', () async {
+      _writeInfoPlist(temp, hasUsageKey: true, hasAllowsLocalNetworking: true);
+      steps.devicectlAvailable = false;
+
+      expect(
+        await runDoctor(on: context(platform: FluseTargetPlatform.ios)),
+        1,
+      );
+
+      expect(text(), contains('✗ xcrun devicectl'));
+    });
+
+    test('ios/ が無ければ指摘する', () async {
+      expect(
+        await runDoctor(on: context(platform: FluseTargetPlatform.ios)),
+        1,
+      );
+
+      expect(text(), contains('✗ ios/'));
+      expect(text(), contains('flutter create --platforms=ios .'));
+    });
+
+    test('Info.plist に NSLocalNetworkUsageDescription が無ければ指摘する', () async {
+      _writeInfoPlist(temp, hasUsageKey: false, hasAllowsLocalNetworking: true);
+
+      expect(
+        await runDoctor(on: context(platform: FluseTargetPlatform.ios)),
+        1,
+      );
+
+      expect(text(), contains('✗ Info.plist: NSLocalNetworkUsageDescription'));
+      expect(text(), contains('LAN の WebSocket に繋がりません'));
+      // もう片方は揃っている。
+      expect(text(), contains('✓ Info.plist: NSAllowsLocalNetworking'));
+    });
+
+    test('Info.plist に NSAllowsLocalNetworking が無ければ指摘する', () async {
+      _writeInfoPlist(temp, hasUsageKey: true, hasAllowsLocalNetworking: false);
+
+      expect(
+        await runDoctor(on: context(platform: FluseTargetPlatform.ios)),
+        1,
+      );
+
+      expect(text(), contains('✗ Info.plist: NSAllowsLocalNetworking'));
+      expect(text(), contains('LAN の WebSocket に繋がりません'));
+      expect(text(), contains('✓ Info.plist: NSLocalNetworkUsageDescription'));
+    });
+
+    test('Info.plist 自体が無ければ両方を指摘する', () async {
+      expect(
+        await runDoctor(on: context(platform: FluseTargetPlatform.ios)),
+        1,
+      );
+
+      expect(text(), contains('✗ Info.plist: NSLocalNetworkUsageDescription'));
+      expect(text(), contains('✗ Info.plist: NSAllowsLocalNetworking'));
+    });
+  });
+}
+
+/// `ios/Runner/Info.plist` を演じる。
+///
+/// [hasUsageKey] / [hasAllowsLocalNetworking] を false にすると、
+/// 該当のキーだけを落とした plist を書く。**`ios/` 自体は必ず作る。**
+/// `ios/` の有無は別の検査（`_checkIosDir`）が担うため、ここで
+/// 混ぜない。
+void _writeInfoPlist(
+  Directory root, {
+  required bool hasUsageKey,
+  required bool hasAllowsLocalNetworking,
+}) {
+  final File file = File(p.join(root.path, 'ios', 'Runner', 'Info.plist'));
+  file.parent.createSync(recursive: true);
+
+  final StringBuffer buffer = StringBuffer()
+    ..writeln('<?xml version="1.0" encoding="UTF-8"?>')
+    ..writeln('<plist version="1.0">')
+    ..writeln('<dict>');
+  if (hasUsageKey) {
+    buffer
+      ..writeln('  <key>NSLocalNetworkUsageDescription</key>')
+      ..writeln('  <string>fluse の LAN 内ホットリロードに使います</string>');
+  }
+  buffer.writeln('  <key>NSAppTransportSecurity</key>');
+  buffer.writeln('  <dict>');
+  if (hasAllowsLocalNetworking) {
+    buffer
+      ..writeln('    <key>NSAllowsLocalNetworking</key>')
+      ..writeln('    <true/>');
+  }
+  buffer
+    ..writeln('  </dict>')
+    ..writeln('</dict>')
+    ..writeln('</plist>');
+
+  file.writeAsStringSync(buffer.toString());
 }
 
 const FlutterSdk _sdk = FlutterSdk(
