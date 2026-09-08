@@ -7,6 +7,7 @@ import 'package:yaml/yaml.dart';
 import 'plugin_ref.dart';
 import 'project_info.dart';
 import 'project_not_flutter_exception.dart';
+import 'project_platform.dart';
 
 /// ユーザープロジェクトを読み取る（設計 §2.2.2）。
 ///
@@ -26,7 +27,23 @@ final class ProjectAnalyzer {
   ///
   /// Flutter プロジェクトでなければ [ProjectNotFlutterException]、
   /// 読めるが中身が足りなければ [ProjectAnalysisException] を投げる。
-  Future<ProjectInfo> analyze(Directory projectRoot) async {
+  ///
+  /// [platform] は読む識別子を選ぶ。**既定は [ProjectPlatform.android] で、
+  /// 従来どおり `applicationId` だけを読む。** `ProjectPlatform.ios` を
+  /// 渡すと `bundleId` だけを読み、`applicationId` は null のままになる。
+  /// 一方の platform を読んでいる間、もう一方は解析しない。
+  ///
+  /// `android/` と `ios/` の**両方が無い**場合だけ、ここで
+  /// [ProjectAnalysisException] を投げる。**要求した platform のディレクトリ
+  /// だけが無く、もう一方は存在する場合はここでは弾かない。** その場合でも、
+  /// 要求された platform の識別子は結局読めないので、この後
+  /// `_readApplicationId` / `_readBundleId` がそれぞれの言葉で
+  /// [ProjectAnalysisException] を投げる（例: android/ が無く ios/ だけの
+  /// プロジェクトで `platform: ProjectPlatform.android` を指定した場合）。
+  Future<ProjectInfo> analyze(
+    Directory projectRoot, {
+    ProjectPlatform platform = ProjectPlatform.android,
+  }) async {
     final String root = projectRoot.absolute.path;
     final String pubspecPath = p.join(root, 'pubspec.yaml');
     final File pubspec = File(pubspecPath);
@@ -44,10 +61,35 @@ final class ProjectAnalyzer {
       pubspecPath: pubspecPath,
     );
 
+    final Directory androidDir = Directory(p.join(root, 'android'));
+    final Directory iosDir = Directory(p.join(root, 'ios'));
+
+    // **両方無いときだけ、ここでまとめて弾く。** 個別の識別子が読めない
+    // 場合は、この後の platform 別の reader が自分の言葉で例外を投げる。
+    // ここで見るのは「そもそもどちらの対象も無い」プロジェクトだけ。
+    if (!androidDir.existsSync() && !iosDir.existsSync()) {
+      throw ProjectAnalysisException(
+        'android/app/build.gradle(.kts) も '
+        'ios/Runner.xcodeproj/project.pbxproj も見当たりません'
+        '（android/ も ios/ もありません）',
+        path: p.join(androidDir.path, 'app', 'build.gradle.kts'),
+      );
+    }
+
+    String? applicationId;
+    String? bundleId;
+    switch (platform) {
+      case ProjectPlatform.android:
+        applicationId = _readApplicationId(root);
+      case ProjectPlatform.ios:
+        bundleId = _readBundleId(root);
+    }
+
     return ProjectInfo(
       root: root,
       packageName: packageName,
-      applicationId: _readApplicationId(root),
+      applicationId: applicationId,
+      bundleId: bundleId,
       defaultTarget: defaultTarget,
       plugins: _readPlugins(root),
     );
@@ -165,6 +207,93 @@ final class ProjectAnalyzer {
     throw ProjectAnalysisException(
       'android/app/build.gradle(.kts) がありません',
       path: candidates.first,
+    );
+  }
+
+  // ------------------------------------------------------------- bundleId
+
+  /// `project.pbxproj` の `PRODUCT_BUNDLE_IDENTIFIER = <value>;` を書いた行。
+  /// 値は引用符で囲まれることも、囲まれないこともある。
+  static final RegExp _bundleIdPattern = RegExp(
+    r'''PRODUCT_BUNDLE_IDENTIFIER\s*=\s*"?([^;"]+)"?\s*;''',
+  );
+
+  /// `Info.plist` の `CFBundleIdentifier` エントリ。
+  static final RegExp _cfBundleIdentifierPattern = RegExp(
+    r'''<key>\s*CFBundleIdentifier\s*</key>\s*<string>([^<]+)</string>''',
+  );
+
+  /// `$(...)` の変数参照かどうか。
+  ///
+  /// `project.pbxproj` は Debug / Release / Profile の3つの構成を持つのが
+  /// 普通で、`Info.plist` の既定値もビルド設定側の値をこの記法で参照する。
+  /// 具体値の行が見つかるまで、この形は読み飛ばす。
+  static bool _isVariableReference(String value) =>
+      value.startsWith(r'$(') && value.endsWith(')');
+
+  /// 一致した中から、変数参照でない最初の値を返す。
+  static String? _firstConcreteValue(Iterable<RegExpMatch> matches) {
+    for (final RegExpMatch match in matches) {
+      final String value = match.group(1)!.trim();
+      if (!_isVariableReference(value)) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  /// `ios/Runner.xcodeproj/project.pbxproj` または `ios/Runner/Info.plist`
+  /// から bundle identifier を取り出す。
+  ///
+  /// **xcodebuild は動かさない。** `_readApplicationId` が Gradle を
+  /// 動かさないのと同じ理由で、評価には Xcode の環境が要り、数十秒かかる
+  /// うえ環境の差で落ちる。読み取るのは1つの文字列だけなので見合わない。
+  static String _readBundleId(String projectRoot) {
+    final String pbxprojPath = p.join(
+      projectRoot,
+      'ios',
+      'Runner.xcodeproj',
+      'project.pbxproj',
+    );
+    final File pbxproj = File(pbxprojPath);
+    if (pbxproj.existsSync()) {
+      // コメントに書かれた例を拾わないよう、先に落とす。
+      final String source = pbxproj.readAsStringSync().replaceAll(
+        _commentPattern,
+        '',
+      );
+      final String? bundleId = _firstConcreteValue(
+        _bundleIdPattern.allMatches(source),
+      );
+      if (bundleId != null) {
+        return bundleId;
+      }
+    }
+
+    // **`project.pbxproj` に具体値が無ければ `Info.plist` を見る。**
+    // 既定のテンプレートは `Info.plist` 側で `$(PRODUCT_BUNDLE_IDENTIFIER)`
+    // を参照するだけだが、`Info.plist` を直接書き換えているプロジェクトも
+    // ある。
+    final String infoPlistPath = p.join(
+      projectRoot,
+      'ios',
+      'Runner',
+      'Info.plist',
+    );
+    final File infoPlist = File(infoPlistPath);
+    if (infoPlist.existsSync()) {
+      final String source = infoPlist.readAsStringSync();
+      final String? bundleId = _firstConcreteValue(
+        _cfBundleIdentifierPattern.allMatches(source),
+      );
+      if (bundleId != null) {
+        return bundleId;
+      }
+    }
+
+    throw ProjectAnalysisException(
+      'PRODUCT_BUNDLE_IDENTIFIER も CFBundleIdentifier も見つかりません',
+      path: infoPlist.existsSync() ? infoPlistPath : pbxprojPath,
     );
   }
 

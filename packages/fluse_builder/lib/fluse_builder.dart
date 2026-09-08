@@ -23,5 +23,6 @@ export 'src/project_analyzer.dart';
 export 'src/project_identity.dart';
 export 'src/project_info.dart';
 export 'src/project_not_flutter_exception.dart';
+export 'src/project_platform.dart';
 export 'src/pub_get_runner.dart';
 export 'src/sdk_not_found_exception.dart';

@@ -28,8 +28,14 @@ final class PluginRef {
 
   /// `dev_dependencies` 経由で入っているか。
   ///
-  /// **release ビルドには含まれない。** `fluse_runtime` 自身がこれに当たる
-  /// （設計 §10-4）。
+  /// `.flutter-plugins-dependencies` の `dev_dependency` をそのまま映した
+  /// メタデータ。`fluse_runtime` 自身がこれに当たる（設計 §10-4）。
+  ///
+  /// **release ビルドから外れるかどうかは、これだけでは決まらない。**
+  /// Android では dev_dependency は release ビルドに含まれないが、iOS では
+  /// Flutter が dev_dependency を release から除外しない
+  /// （flutter/flutter#163874、未解決）。扱いは platform ごとの Flutter 側
+  /// の挙動であり、この値はあくまで「dev_dependencies 経由か」を示すだけ。
   final bool isDevDependency;
 
   /// ネイティブのビルドを持つか。

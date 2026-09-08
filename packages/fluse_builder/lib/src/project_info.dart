@@ -14,6 +14,7 @@ final class ProjectInfo {
     required this.packageName,
     required this.applicationId,
     required this.defaultTarget,
+    this.bundleId,
     this.plugins = const <PluginRef>[],
   });
 
@@ -23,11 +24,21 @@ final class ProjectInfo {
   /// `pubspec.yaml` の `name`。生成するエントリポイントの import に使う。
   final String packageName;
 
-  /// `android/app/build.gradle(.kts)` の `applicationId`。
+  /// `android/app/build.gradle(.kts)` の `applicationId`。Android 経路の識別子。
   ///
   /// 端末に入る際の同一性はこれで決まる。既に入っている本番の debug ビルドと
   /// ぶつかると `INSTALL_FAILED_UPDATE_INCOMPATIBLE` になる（設計 §5.3）。
-  final String applicationId;
+  ///
+  /// `ProjectAnalyzer.analyze` を `ProjectPlatform.ios` で呼んだ場合は
+  /// 読まないので null になる。
+  final String? applicationId;
+
+  /// `ios/Runner.xcodeproj/project.pbxproj` などの `PRODUCT_BUNDLE_IDENTIFIER`。
+  /// iOS 経路の識別子。
+  ///
+  /// `ProjectAnalyzer.analyze` を既定（`ProjectPlatform.android`）で呼んだ
+  /// 場合は読まないので null になる。
+  final String? bundleId;
 
   /// 既定のエントリポイント。`lib/main.dart`。
   final String defaultTarget;
@@ -36,5 +47,5 @@ final class ProjectInfo {
   final List<PluginRef> plugins;
 
   @override
-  String toString() => 'ProjectInfo($packageName, $applicationId)';
+  String toString() => 'ProjectInfo($packageName, $applicationId, $bundleId)';
 }

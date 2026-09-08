@@ -71,6 +71,21 @@ final class PreviewAppBuildException implements Exception {
       exitCode = null,
       path = null;
 
+  /// `ProjectInfo.applicationId` が無い場合。
+  ///
+  /// **`ProjectPlatform.ios` で解析した `ProjectInfo` を渡すと起こる。**
+  /// `PreviewAppBuilder` は `flutter build apk` しか呼ばず、Android 向けの
+  /// Preview App しか作れない（iOS のビルドは本 Issue のスコープ外）。
+  const PreviewAppBuildException.applicationIdMissing()
+    : reason = 'applicationId がありません',
+      detail =
+          'ProjectAnalyzer.analyze を platform: ProjectPlatform.ios で'
+          '呼ぶと applicationId は読まれず null になる。PreviewAppBuilder は'
+          'flutter build apk を呼ぶので、ProjectPlatform.android で解析した'
+          'ProjectInfo を渡すこと',
+      exitCode = null,
+      path = null;
+
   /// 失敗の要約。
   final String reason;
 
@@ -202,6 +217,15 @@ final class PreviewAppBuilder {
       );
     }
 
+    // **ビルドを走らせる前に確かめる。** `ProjectPlatform.ios` で解析した
+    // `ProjectInfo` には `applicationId` が無い。ここで弾かずに進むと、
+    // 数十秒かけて `flutter build apk` を走らせた後、最後の
+    // `effectiveApplicationId` で初めて null が表面化する。
+    final String? applicationId = project.applicationId;
+    if (applicationId == null) {
+      throw const PreviewAppBuildException.applicationIdMissing();
+    }
+
     final List<String> arguments = buildArguments(
       project: project,
       entrypoint: entrypoint,
@@ -260,10 +284,7 @@ final class PreviewAppBuilder {
 
     return BuildResult(
       apk: apk,
-      applicationId: effectiveApplicationId(
-        project.applicationId,
-        applicationIdSuffix,
-      ),
+      applicationId: effectiveApplicationId(applicationId, applicationIdSuffix),
       buildMeta: meta,
     );
   }
