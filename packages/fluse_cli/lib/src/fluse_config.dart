@@ -5,6 +5,7 @@ import 'package:yaml/yaml.dart';
 import 'package:yaml_edit/yaml_edit.dart';
 
 import 'fluse_config_exception.dart';
+import 'fluse_target_platform.dart';
 
 /// `fluse.yaml` の中身（設計 §9.2）。
 ///
@@ -19,6 +20,7 @@ final class FluseConfig {
     this.applicationIdSuffix,
     this.dartDefines = const <String>[],
     this.serveApk = defaultServeApk,
+    this.platform = defaultPlatform,
   });
 
   /// ファイル名。
@@ -36,6 +38,11 @@ final class FluseConfig {
   /// APK を配るか。
   static const bool defaultServeApk = true;
 
+  /// 既定の対象プラットフォーム。今のところ Android のみ実装がある
+  /// （Issue #103、Phase2 で iOS 対応）。
+  static const FluseTargetPlatform defaultPlatform =
+      FluseTargetPlatform.android;
+
   /// ポートの下限。
   static const int minPort = 0;
 
@@ -44,6 +51,9 @@ final class FluseConfig {
 
   /// ポートを差し替える環境変数（設計 §9.2）。
   static const String portVariable = 'FLUSE_PORT';
+
+  /// プラットフォームを差し替える環境変数（Issue #103）。
+  static const String platformVariable = 'FLUSE_PLATFORM';
 
   /// 読み込んだスキーマの版。
   final int version;
@@ -55,6 +65,10 @@ final class FluseConfig {
   final String target;
 
   /// 署名がぶつかった時に付ける接尾辞（設計 §5.3）。無ければ null。
+  ///
+  /// **Android 専用。** applicationId は Android の概念で、iOS には対応する
+  /// ものが無い（bundle identifier は Xcode 側の設定に属する）。
+  /// [platform] が [FluseTargetPlatform.ios] のときは読まれない。
   final String? applicationIdSuffix;
 
   /// `-D<key>=<value>` に渡す値。
@@ -64,6 +78,12 @@ final class FluseConfig {
 
   /// `/apk` で Preview App を配るか。
   final bool serveApk;
+
+  /// 対象プラットフォーム（Issue #103）。
+  ///
+  /// **この Issue では受け口があるだけ。** 解決した値を使ってビルダー／
+  /// インストーラの実装を切り替える処理は後続 Issue の範囲。
+  final FluseTargetPlatform platform;
 
   // ---------------------------------------------------------------- 読み込み
 
@@ -127,6 +147,10 @@ final class FluseConfig {
       ),
       dartDefines: _optionalStringList(document, 'dartDefines', path),
       serveApk: _optionalBool(document, 'serveApk', path) ?? defaultServeApk,
+      platform: switch (_optionalString(document, 'platform', path)) {
+        final String value => validatePlatform(value, 'platform', path: path),
+        null => defaultPlatform,
+      },
     );
   }
 
@@ -152,6 +176,7 @@ final class FluseConfig {
     String? applicationIdSuffixArgument,
     List<String>? dartDefinesArgument,
     bool? serveApkArgument,
+    String? platformArgument,
     Map<String, String>? environment,
   }) {
     final FluseConfig file = readFrom(projectRoot);
@@ -182,6 +207,14 @@ final class FluseConfig {
         file: file.serveApk,
         fallback: defaultServeApk,
       ),
+      platform: resolveValue<FluseTargetPlatform>(
+        argument: platformArgument == null
+            ? null
+            : validatePlatform(platformArgument, '--platform'),
+        environment: platformFromEnvironment(env),
+        file: file.platform,
+        fallback: defaultPlatform,
+      ),
     );
   }
 
@@ -199,6 +232,17 @@ final class FluseConfig {
     return validatePort(parsed, portVariable);
   }
 
+  /// 環境変数から読むプラットフォーム。指定が無ければ null。
+  static FluseTargetPlatform? platformFromEnvironment(
+    Map<String, String> environment,
+  ) {
+    final String? raw = environment[platformVariable];
+    if (raw == null || raw.trim().isEmpty) {
+      return null;
+    }
+    return validatePlatform(raw.trim(), platformVariable);
+  }
+
   /// ポートの範囲を見る。
   ///
   /// **どの経路から来ても同じ所で見る。** 片方だけ見ていると、
@@ -212,6 +256,29 @@ final class FluseConfig {
       );
     }
     return value;
+  }
+
+  /// プラットフォームの値を見る。
+  ///
+  /// **どの経路から来ても同じ所で見る。** 片方だけ見ていると、許容値を
+  /// 外れたまま先へ進み、原因の分からない失敗になる。黙って既定値へは
+  /// 倒さない。
+  static FluseTargetPlatform validatePlatform(
+    String value,
+    String source, {
+    String? path,
+  }) {
+    final FluseTargetPlatform? parsed = FluseTargetPlatform.tryParse(value);
+    if (parsed == null) {
+      final String allowed = FluseTargetPlatform.values
+          .map((FluseTargetPlatform platform) => platform.value)
+          .join(' / ');
+      throw FluseConfigException(
+        '$source が正しくありません: $value（$allowed）',
+        path: path,
+      );
+    }
+    return parsed;
   }
 
   // ---------------------------------------------------------------- 書き込み
@@ -243,7 +310,8 @@ final class FluseConfig {
         ..update(<Object>['target'], target)
         ..update(<Object>['applicationIdSuffix'], applicationIdSuffix)
         ..update(<Object>['dartDefines'], dartDefines)
-        ..update(<Object>['serveApk'], serveApk);
+        ..update(<Object>['serveApk'], serveApk)
+        ..update(<Object>['platform'], platform.value);
     } else {
       editor = YamlEditor(_template());
     }
@@ -275,7 +343,11 @@ final class FluseConfig {
       ..writeln('# 包む対象のエントリポイント。')
       ..writeln('target: $target')
       ..writeln()
-      ..writeln('# 署名がぶつかった時に付ける接尾辞（設計 §5.3）。')
+      ..writeln('# 対象プラットフォーム（android / ios）。今は Android のみ実装があります')
+      ..writeln('# （Phase2 で iOS 対応予定）。$platformVariable で一時的に変えられます。')
+      ..writeln('platform: ${platform.value}')
+      ..writeln()
+      ..writeln('# 署名がぶつかった時に付ける接尾辞（設計 §5.3）。Android 専用です。')
       ..writeln('applicationIdSuffix: ${applicationIdSuffix ?? 'null'}')
       ..writeln()
       ..writeln('# -D で渡す値。順序も含めて意味があります。')
@@ -369,5 +441,6 @@ final class FluseConfig {
   String toString() =>
       'FluseConfig(port: $port, target: $target, '
       'applicationIdSuffix: $applicationIdSuffix, '
-      'dartDefines: ${dartDefines.length}件, serveApk: $serveApk)';
+      'dartDefines: ${dartDefines.length}件, serveApk: $serveApk, '
+      'platform: ${platform.value})';
 }

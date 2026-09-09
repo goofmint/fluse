@@ -12,11 +12,13 @@ void main() {
   late Directory temp;
   late Steps steps;
   late List<String> output;
+  late List<String> logged;
 
   setUp(() async {
     temp = Directory.systemTemp.createTempSync('fluse_rebuild_');
     steps = Steps(temp);
     output = <String>[];
+    logged = <String>[];
     createProject(temp);
     // **`init` を通してから始める。** 指紋も keystore も APK も、
     // 前回のビルドが残した物を見て判断するコマンドのため。
@@ -34,7 +36,7 @@ void main() {
     projectRoot: temp,
     config: const FluseConfig(),
     sdk: _sdk,
-    logger: FluseLogger(sinks: const <FluseLogSink>[]),
+    logger: FluseLogger(sinks: <FluseLogSink>[_MemoryLogSink(logged)]),
     processManager: steps,
   );
 
@@ -153,6 +155,54 @@ void main() {
       expect(output.join('\n'), contains('preview.apk'));
     });
   });
+
+  group('オプション', () {
+    test('--platform が効く', () async {
+      _touchManifest(temp);
+
+      expect(await runRebuild(arguments: <String>['--platform', 'ios']), 0);
+
+      expect(
+        logged.any((String line) => line.contains('"platform":"ios"')),
+        isTrue,
+      );
+    });
+
+    test('--platform を指定しなければ fluse.yaml か既定値', () async {
+      _touchManifest(temp);
+
+      expect(await runRebuild(), 0);
+
+      expect(
+        logged.any((String line) => line.contains('"platform":"android"')),
+        isTrue,
+      );
+    });
+
+    test('android / ios 以外の --platform は弾く', () async {
+      expect(await runRebuild(arguments: <String>['--platform', 'windows']), 1);
+
+      expect(steps.ran('build apk'), isFalse);
+      expect(output.join('\n'), contains('android'));
+      expect(output.join('\n'), contains('ios'));
+    });
+  });
+}
+
+/// テスト用のインメモリログシンク。
+///
+/// **ログの中身を検証できるようにする。** `context.logger` が実際に何を
+/// 書いたかは、ファイルへ書かせて読み直す以外に確かめる方法が無い。
+final class _MemoryLogSink implements FluseLogSink {
+  _MemoryLogSink(this._lines);
+
+  final List<String> _lines;
+
+  @override
+  void writeLine(String line) => _lines.add(line);
+
+  @override
+  Future<void> close() async {}
 }
 
 const FlutterSdk _sdk = FlutterSdk(

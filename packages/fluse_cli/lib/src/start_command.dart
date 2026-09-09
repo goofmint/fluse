@@ -12,6 +12,7 @@ import 'console_qr.dart';
 import 'fluse_command.dart';
 import 'fluse_config.dart';
 import 'fluse_context.dart';
+import 'fluse_target_platform.dart';
 
 /// 起動して待ち受けるまでの一式。テストから差し替える。
 typedef ServerFactory = Future<StartedServer> Function(StartRequest request);
@@ -49,6 +50,7 @@ final class StartRequest {
     required this.host,
     required this.port,
     required this.target,
+    required this.platform,
   });
 
   final FluseContext context;
@@ -58,6 +60,12 @@ final class StartRequest {
   final String host;
   final int port;
   final String target;
+
+  /// 対象プラットフォーム（Issue #103）。
+  ///
+  /// **ここでは運ぶだけ。** ビルダー／インストーラの実装を切り替える処理は
+  /// 後続 Issue の範囲。
+  final FluseTargetPlatform platform;
 }
 
 /// `fluse start`（設計 §2.2.4）。
@@ -80,6 +88,11 @@ final class StartCommand implements FluseCommand {
         valueHelp: 'ip',
       )
       ..addOption('target', help: '包む対象のエントリポイント。', valueHelp: 'path')
+      ..addOption(
+        'platform',
+        help: '対象プラットフォーム（android / ios）。省略すると fluse.yaml か既定値。',
+        valueHelp: 'name',
+      )
       ..addFlag('help', abbr: 'h', negatable: false, help: '使い方を表示します。');
   }
 
@@ -135,6 +148,7 @@ final class StartCommand implements FluseCommand {
       projectRoot: context.projectRoot,
       portArgument: _intOf(args, 'port'),
       targetArgument: _stringOf(args, 'target'),
+      platformArgument: _stringOf(args, 'platform'),
     );
 
     final ProjectInfo project = await analyzer.analyze(context.projectRoot);
@@ -163,6 +177,7 @@ final class StartCommand implements FluseCommand {
         host: host,
         port: config.port,
         target: config.target,
+        platform: config.platform,
       ),
     );
 

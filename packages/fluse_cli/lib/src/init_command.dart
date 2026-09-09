@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'fluse_command.dart';
 import 'fluse_config.dart';
 import 'fluse_context.dart';
+import 'fluse_target_platform.dart';
 
 /// `fluse init`（設計 §2.2.4）。
 ///
@@ -37,6 +38,11 @@ final class InitCommand implements FluseCommand {
         valueHelp: 'suffix',
       )
       ..addOption(
+        'platform',
+        help: '対象プラットフォーム（android / ios）。省略すると fluse.yaml か既定値。',
+        valueHelp: 'name',
+      )
+      ..addOption(
         'device',
         abbr: 'd',
         help: '入れる端末。省略すると1台だけの時はそれを使います。',
@@ -65,19 +71,24 @@ final class InitCommand implements FluseCommand {
 
   @override
   Future<int> run(ArgResults args, FluseContext context) async {
-    // **コマンドの引数が最優先。** `fluse.yaml` は「いつもそうしたい」を
-    // 書く場所で、その場の指定はこちらが勝つ（設計 §9.2）。
-    final String target = _stringOf(args, 'target') ?? context.config.target;
-    final String? suffix =
-        _stringOf(args, 'application-id-suffix') ??
-        context.config.applicationIdSuffix;
-    final String? deviceSerial = _stringOf(args, 'device');
-
     try {
+      // **コマンドの引数が最優先。** `fluse.yaml` は「いつもそうしたい」を
+      // 書く場所で、その場の指定はこちらが勝つ（設計 §9.2）。
+      final String target = _stringOf(args, 'target') ?? context.config.target;
+      final String? suffix =
+          _stringOf(args, 'application-id-suffix') ??
+          context.config.applicationIdSuffix;
+      final String? platformArgument = _stringOf(args, 'platform');
+      final FluseTargetPlatform platform = platformArgument == null
+          ? context.config.platform
+          : FluseConfig.validatePlatform(platformArgument, '--platform');
+      final String? deviceSerial = _stringOf(args, 'device');
+
       return await _run(
         context: context,
         target: target,
         suffix: suffix,
+        platform: platform,
         deviceSerial: deviceSerial,
       );
     } on Object catch (error) {
@@ -91,6 +102,7 @@ final class InitCommand implements FluseCommand {
     required FluseContext context,
     required String target,
     required String? suffix,
+    required FluseTargetPlatform platform,
     required String? deviceSerial,
   }) async {
     _step(context, 1, 'プロジェクトを読みます');
@@ -135,7 +147,12 @@ final class InitCommand implements FluseCommand {
     // **ビルドしてから残す。** 失敗したビルドの指紋を残すと、次回に
     // 「変わっていない」と判じて作り直さなくなる。
     await _saveFingerprint(context, resolved, build);
-    await _saveConfig(context, target: target, suffix: suffix);
+    await _saveConfig(
+      context,
+      target: target,
+      suffix: suffix,
+      platform: platform,
+    );
 
     _step(context, 6, '端末へ入れます');
     return _install(context: context, build: build, deviceSerial: deviceSerial);
@@ -251,6 +268,7 @@ final class InitCommand implements FluseCommand {
     FluseContext context, {
     required String target,
     required String? suffix,
+    required FluseTargetPlatform platform,
   }) async {
     final FluseConfig config = FluseConfig(
       port: context.config.port,
@@ -258,6 +276,7 @@ final class InitCommand implements FluseCommand {
       applicationIdSuffix: suffix,
       dartDefines: context.config.dartDefines,
       serveApk: context.config.serveApk,
+      platform: platform,
     );
     await config.writeTo(
       File(p.join(context.projectRoot.path, FluseConfig.fileName)),

@@ -28,6 +28,7 @@ void main() {
 version: 1
 port: 9000
 target: lib/other.dart
+platform: ios
 applicationIdSuffix: .preview
 dartDefines:
   - FOO=1
@@ -40,6 +41,7 @@ serveApk: false
       expect(config.version, 1);
       expect(config.port, 9000);
       expect(config.target, 'lib/other.dart');
+      expect(config.platform, FluseTargetPlatform.ios);
       expect(config.applicationIdSuffix, '.preview');
       expect(config.dartDefines, <String>['FOO=1', 'BAR=2']);
       expect(config.serveApk, isFalse);
@@ -54,6 +56,7 @@ serveApk: false
       expect(config.applicationIdSuffix, isNull);
       expect(config.dartDefines, isEmpty);
       expect(config.serveApk, isTrue);
+      expect(config.platform, FluseConfig.defaultPlatform);
     });
 
     test('空のファイルも既定値', () {
@@ -69,6 +72,13 @@ serveApk: false
 
       expect(config.port, 9000);
       expect(config.target, FluseConfig.defaultTarget);
+    });
+
+    test('platform キーが無い既存の fluse.yaml は android のまま（後方互換）', () {
+      // Issue #103 より前に作られた fluse.yaml。黙って壊さない。
+      writeConfig('port: 9000\ntarget: lib/other.dart\n');
+
+      expect(FluseConfig.readFrom(temp).platform, FluseTargetPlatform.android);
     });
 
     test('applicationIdSuffix: null を読める', () {
@@ -89,6 +99,22 @@ serveApk: false
             (FluseConfigException e) => e.toString(),
             'toString',
             allOf(contains('port'), contains(FluseConfig.fileName)),
+          ),
+        ),
+      );
+    });
+
+    test('platform が android / ios 以外なら弾く', () {
+      // 許容値を外れたまま先へ進むと、原因の分からない失敗になる。
+      writeConfig('platform: windows\n');
+
+      expect(
+        () => FluseConfig.readFrom(temp),
+        throwsA(
+          isA<FluseConfigException>().having(
+            (FluseConfigException e) => e.toString(),
+            'toString',
+            allOf(contains('platform'), contains('android'), contains('ios')),
           ),
         ),
       );
@@ -314,6 +340,139 @@ serveApk: false
     });
   });
 
+  group('platform の優先順位（完了条件）', () {
+    // CLI引数 > 環境変数 > fluse.yaml > 既定値。既定値が android なので、
+    // 上書きが効いたかどうかは ios との違いで確かめる。
+    FluseConfig resolvePlatform({
+      String? argument,
+      String? environment,
+      String? file,
+    }) {
+      if (file != null) {
+        writeConfig('platform: $file\n');
+      }
+      final Map<String, String> env = <String, String>{};
+      if (environment != null) {
+        env[FluseConfig.platformVariable] = environment;
+      }
+      return FluseConfig.resolve(
+        projectRoot: temp,
+        platformArgument: argument,
+        environment: env,
+      );
+    }
+
+    test('4つ揃えば CLI 引数', () {
+      expect(
+        resolvePlatform(
+          argument: 'ios',
+          environment: 'android',
+          file: 'android',
+        ).platform,
+        FluseTargetPlatform.ios,
+      );
+    });
+
+    test('引数が無ければ環境変数', () {
+      expect(
+        resolvePlatform(environment: 'ios', file: 'android').platform,
+        FluseTargetPlatform.ios,
+      );
+    });
+
+    test('環境変数も無ければ fluse.yaml', () {
+      expect(resolvePlatform(file: 'ios').platform, FluseTargetPlatform.ios);
+    });
+
+    test('どれも無ければ既定値', () {
+      expect(resolvePlatform().platform, FluseConfig.defaultPlatform);
+    });
+
+    test('引数と環境変数だけなら引数', () {
+      expect(
+        resolvePlatform(argument: 'ios', environment: 'android').platform,
+        FluseTargetPlatform.ios,
+      );
+    });
+
+    test('引数とファイルだけなら引数', () {
+      expect(
+        resolvePlatform(argument: 'ios', file: 'android').platform,
+        FluseTargetPlatform.ios,
+      );
+    });
+
+    test('環境変数とファイルだけなら環境変数', () {
+      expect(
+        resolvePlatform(environment: 'ios', file: 'android').platform,
+        FluseTargetPlatform.ios,
+      );
+    });
+
+    test('引数だけなら引数', () {
+      expect(
+        resolvePlatform(argument: 'ios').platform,
+        FluseTargetPlatform.ios,
+      );
+    });
+
+    test('環境変数だけなら環境変数', () {
+      expect(
+        resolvePlatform(environment: 'ios').platform,
+        FluseTargetPlatform.ios,
+      );
+    });
+
+    test('ファイルだけならファイル', () {
+      expect(resolvePlatform(file: 'ios').platform, FluseTargetPlatform.ios);
+    });
+
+    test('空の環境変数は指定なし', () {
+      // `FLUSE_PLATFORM=` を android と読み替えると、意図せず既定へ倒れる。
+      expect(
+        resolvePlatform(environment: '', file: 'ios').platform,
+        FluseTargetPlatform.ios,
+      );
+      expect(
+        resolvePlatform(environment: '   ', file: 'ios').platform,
+        FluseTargetPlatform.ios,
+      );
+    });
+
+    test('不正な platform はファイルで弾く', () {
+      writeConfig('platform: windows\n');
+
+      expect(
+        () => FluseConfig.resolve(
+          projectRoot: temp,
+          environment: const <String, String>{},
+        ),
+        throwsA(isA<FluseConfigException>()),
+      );
+    });
+
+    test('不正な platform は CLI 引数で弾く', () {
+      expect(
+        () => resolvePlatform(argument: 'windows'),
+        throwsA(isA<FluseConfigException>()),
+      );
+    });
+
+    test('不正な platform は環境変数で弾く', () {
+      // 指定したのに効かない理由が分からなくならないよう、黙って倒さない。
+      expect(
+        () => resolvePlatform(environment: 'windows'),
+        throwsA(
+          isA<FluseConfigException>().having(
+            (FluseConfigException e) => e.toString(),
+            'toString',
+            contains(FluseConfig.platformVariable),
+          ),
+        ),
+      );
+    });
+  });
+
   group('書き込み', () {
     test('無ければ全項目を並べて作る', () async {
       final File file = File(p.join(temp.path, FluseConfig.fileName));
@@ -328,6 +487,7 @@ serveApk: false
       expect(map['applicationIdSuffix'], isNull);
       expect(map['dartDefines'], isEmpty);
       expect(map['serveApk'], isTrue);
+      expect(map['platform'], FluseConfig.defaultPlatform.value);
     });
 
     test('書いたものを読み直せる', () async {
@@ -339,6 +499,7 @@ serveApk: false
         applicationIdSuffix: '.preview',
         dartDefines: <String>['FOO=1'],
         serveApk: false,
+        platform: FluseTargetPlatform.ios,
       ).writeTo(file);
 
       final FluseConfig read = FluseConfig.readFrom(temp);
@@ -347,6 +508,7 @@ serveApk: false
       expect(read.applicationIdSuffix, '.preview');
       expect(read.dartDefines, <String>['FOO=1']);
       expect(read.serveApk, isFalse);
+      expect(read.platform, FluseTargetPlatform.ios);
     });
 
     test('既にある内容とコメントを残す', () async {

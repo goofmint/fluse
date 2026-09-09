@@ -6,7 +6,9 @@ import 'package:fluse_protocol/fluse_protocol.dart';
 import 'package:path/path.dart' as p;
 
 import 'fluse_command.dart';
+import 'fluse_config.dart';
 import 'fluse_context.dart';
+import 'fluse_target_platform.dart';
 
 /// `fluse rebuild`（設計 §2.2.4）。
 ///
@@ -40,6 +42,11 @@ final class RebuildCommand implements FluseCommand {
         help: '入れる端末。省略すると1台だけの時はそれを使います。',
         valueHelp: 'serial',
       )
+      ..addOption(
+        'platform',
+        help: '対象プラットフォーム（android / ios）。省略すると fluse.yaml か既定値。',
+        valueHelp: 'name',
+      )
       ..addFlag('force', abbr: 'f', negatable: false, help: '指紋が同じでも作り直します。')
       ..addFlag('help', abbr: 'h', negatable: false, help: '使い方を表示します。');
   }
@@ -66,19 +73,25 @@ final class RebuildCommand implements FluseCommand {
 
   @override
   Future<int> run(ArgResults args, FluseContext context) async {
-    // **その場の指定が勝つ。** `fluse.yaml` は「いつもそうしたい」を書く場所
-    // （設計 §9.2）。ここで書き戻しはしない。今回だけの指定を残すと、
-    // 次の `fluse start` が知らないうちに別の対象を見ることになる。
-    final String target = _stringOf(args, 'target') ?? context.config.target;
-    final String? deviceSerial = _stringOf(args, 'device');
-    final bool force = args.options.contains('force') && args['force'] == true;
-
     try {
+      // **その場の指定が勝つ。** `fluse.yaml` は「いつもそうしたい」を書く場所
+      // （設計 §9.2）。ここで書き戻しはしない。今回だけの指定を残すと、
+      // 次の `fluse start` が知らないうちに別の対象を見ることになる。
+      final String target = _stringOf(args, 'target') ?? context.config.target;
+      final String? deviceSerial = _stringOf(args, 'device');
+      final bool force =
+          args.options.contains('force') && args['force'] == true;
+      final String? platformArgument = _stringOf(args, 'platform');
+      final FluseTargetPlatform platform = platformArgument == null
+          ? context.config.platform
+          : FluseConfig.validatePlatform(platformArgument, '--platform');
+
       return await _run(
         context: context,
         target: target,
         deviceSerial: deviceSerial,
         force: force,
+        platform: platform,
       );
     } on Object catch (error) {
       context.logger.error('$error');
@@ -94,6 +107,7 @@ final class RebuildCommand implements FluseCommand {
     required String target,
     required String? deviceSerial,
     required bool force,
+    required FluseTargetPlatform platform,
   }) async {
     final ProjectInfo project = await analyzer.analyze(context.projectRoot);
 
@@ -126,7 +140,12 @@ final class RebuildCommand implements FluseCommand {
       context.previewDir,
     );
 
-    context.logger.info('Preview App を作ります');
+    // **platform はまだ受け取るだけ。** ビルダー／インストーラの実装を
+    // 切り替える処理は後続 Issue の範囲（Issue #103）。ログには残す。
+    context.logger.info(
+      'Preview App を作ります',
+      fields: <String, Object?>{'platform': platform.value},
+    );
     final BuildResult build = await builderFactory(context).build(
       project: project,
       entrypoint: entrypoint.entrypoint,
