@@ -210,16 +210,41 @@ final class FluseConnectPresenterTests: XCTestCase {
         XCTAssertFalse(presenter.isConnecting)
     }
 
-    func testCleartextBlockedShowsTheGivenMessageVerbatim() {
+    /// 実際に塞がれたと分かった時は失敗として扱う（文言はそのまま出す）。
+    func testConfirmedCleartextBlockedIsTreatedAsFailure() {
         let presenter = makePresenter()
         _ = presenter.scanned(validQr(token: token))
 
-        let actions = presenter.cleartextBlocked(message: "ATS の設定を直してください")
+        let actions = presenter.cleartextBlocked(
+            message: "ATS の設定を直してください",
+            certainty: .confirmed
+        )
 
         XCTAssertEqual(
             [.showScanMessage("ATS の設定を直してください"), .resumeScanning],
             actions
         )
+        XCTAssertFalse(presenter.isConnecting)
+    }
+
+    /// **事前通知では接続中の状態を解除しない。**
+    ///
+    /// 事前判定の時点では接続はまだ走っている。ここで失敗として扱うと
+    /// 再スキャンが効くようになり、1本目の裏で2本目の connect() を
+    /// 始められてしまう。
+    func testSuspectedCleartextBlockedKeepsConnecting() {
+        let presenter = makePresenter()
+        _ = presenter.scanned(validQr(token: token))
+
+        let actions = presenter.cleartextBlocked(
+            message: "塞がれている可能性があります",
+            certainty: .suspected
+        )
+
+        XCTAssertEqual([.showScanMessage("塞がれている可能性があります")], actions)
+        // 再スキャンを促していないこと。
+        XCTAssertFalse(actions.contains(.resumeScanning))
+        XCTAssertTrue(presenter.isConnecting)
     }
 
     func testDisconnectedBeforeEstablishedIsTreatedAsFailure() {

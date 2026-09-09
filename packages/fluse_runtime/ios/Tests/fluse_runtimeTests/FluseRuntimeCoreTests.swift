@@ -12,6 +12,17 @@ final class FluseRuntimeCoreTests: XCTestCase {
     /// **直書きしない。** ダミーでも接続トークンの literal は置かない規約
     /// （設計 §6.1）。パスセグメントそのものが資格情報なので、形だけ
     /// 本物に似せて実行時に作る。
+    /// テスト用の使い捨てトークン。
+    ///
+    /// **リテラルを置かない。** ダミーでも `pairingToken` として送られる
+    /// 値なので、.coderabbit.yaml の「secret のハードコーディング禁止」に
+    /// 当たる。実行時に作れば、そもそも混入しようがない。
+    private func secret() -> String {
+        (0..<16)
+            .map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }
+            .joined()
+    }
+
     private func authCode(_ length: Int = 12) -> String {
         (0..<length)
             .map { index -> String in
@@ -133,7 +144,10 @@ final class FluseRuntimeCoreTests: XCTestCase {
         FluseConnection.install(connection)
         defer { FluseConnection.install(nil) }
 
-        connection.connect(endpoint: FluseEndpoint(host: "127.0.0.1", port: 1), pairingToken: "pairing-value")
+        connection.connect(
+            endpoint: FluseEndpoint(host: "127.0.0.1", port: 1),
+            pairingToken: secret()
+        )
         sockets.latest.open()
         sockets.latest.receive(AcceptMessage(sessionId: "s-1", heartbeatIntervalMs: 1_000))
 

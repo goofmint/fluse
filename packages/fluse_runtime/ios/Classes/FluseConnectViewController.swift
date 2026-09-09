@@ -241,13 +241,25 @@ final class FluseConnectViewController: UIViewController {
             guard let self = self else { return }
             let session = AVCaptureSession()
             session.beginConfiguration()
-            defer { session.commitConfiguration() }
+            // **`defer` で閉じない。** `defer` は関数を抜ける時に走るので、
+            // 下の `startRunning()` が設定ブロックを開いたままの状態で
+            // 呼ばれてしまう。この順序だと `NSGenericException` でアプリが
+            // 落ちる。成功経路・失敗経路のどちらでも、先に明示的に
+            // 閉じてから次へ進む。
+            var committed = false
+            func commit() {
+                if !committed {
+                    committed = true
+                    session.commitConfiguration()
+                }
+            }
 
             guard
                 let device = AVCaptureDevice.default(for: .video),
                 let input = try? AVCaptureDeviceInput(device: device),
                 session.canAddInput(input)
             else {
+                commit()
                 self.failToStartCamera()
                 return
             }
@@ -255,6 +267,7 @@ final class FluseConnectViewController: UIViewController {
 
             let output = AVCaptureMetadataOutput()
             guard session.canAddOutput(output) else {
+                commit()
                 self.failToStartCamera()
                 return
             }
@@ -263,12 +276,17 @@ final class FluseConnectViewController: UIViewController {
             session.addOutput(output)
             output.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
             guard output.availableMetadataObjectTypes.contains(.qr) else {
+                commit()
                 self.failToStartCamera()
                 return
             }
             // QR だけに絞る。Android の `FluseQrAnalyzer` が
             // `DecodeHintType.POSSIBLE_FORMATS` を QR だけにするのと同じ理由。
             output.metadataObjectTypes = [.qr]
+
+            // **設定を閉じてから走らせる。** 開いたまま `startRunning()` を
+            // 呼ぶと `NSGenericException` になる。
+            commit()
 
             // `startRunning()` はメインスレッドで呼ばないのが作法
             // （Apple のドキュメントの推奨）。ここまではまだローカル変数
@@ -436,10 +454,14 @@ extension FluseConnectViewController: FluseConnectionListener {
         }
     }
 
-    func onCleartextBlocked(host: String, message: String) {
+    func onCleartextBlocked(
+        host: String,
+        message: String,
+        certainty: FluseCleartextCertainty
+    ) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.apply(self.presenter.cleartextBlocked(message: message))
+            self.apply(self.presenter.cleartextBlocked(message: message, certainty: certainty))
         }
     }
 

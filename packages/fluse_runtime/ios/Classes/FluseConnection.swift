@@ -266,7 +266,8 @@ public final class FluseConnection {
             notifyListeners {
                 $0.onCleartextBlocked(
                     host: endpoint.host,
-                    message: FluseATSCheck.likelyBlockedMessage(host: endpoint.host)
+                    message: FluseATSCheck.likelyBlockedMessage(host: endpoint.host),
+                    certainty: .suspected
                 )
             }
         }
@@ -548,7 +549,9 @@ public final class FluseConnection {
 
         let message = FluseATSCheck.blockedMessage(host: host)
         os_log("ATS に拒否されました（%{public}@）: %{public}@", log: FluseRuntimeCore.log, type: .error, host, message)
-        notifyListeners { $0.onCleartextBlocked(host: host, message: message) }
+        notifyListeners {
+            $0.onCleartextBlocked(host: host, message: message, certainty: .confirmed)
+        }
     }
 
     /**
@@ -708,6 +711,21 @@ public struct FluseDeviceInfo: Equatable {
 }
 
 /// 接続の行方を受け取る側。表示と画面遷移が使う。
+/// `onCleartextBlocked` の確度（Task 9.5 / Issue #93）。
+///
+/// **事前判定と実際の失敗を混ぜない。** 事前判定は Info.plist の
+/// `NSAllowsLocalNetworking` の宣言しか見ておらず、`NSAllowsArbitraryLoads`
+/// や `NSExceptionDomains` で許可していれば実際には繋がる。接続も止めて
+/// いないため、受け手はこれを「失敗した」として扱ってはいけない
+/// （接続中の状態を解除すると、走っている接続の裏で2本目を始められる）。
+public enum FluseCleartextCertainty {
+    /// 宣言が見当たらない。**繋がる可能性は残っている。** 接続は続いている。
+    case suspected
+
+    /// 実際に `URLError` -1022 が返ってきた。接続はこの理由で失敗した。
+    case confirmed
+}
+
 public protocol FluseConnectionListener: AnyObject {
     /// 受理された。
     func onConnected(sessionId: String)
@@ -734,12 +752,16 @@ public protocol FluseConnectionListener: AnyObject {
      * （確度が高い）で呼ばれる。既定の実装（下の extension）は何もしない
      * ため、拾いたいリスナーだけ override すればよい。
      */
-    func onCleartextBlocked(host: String, message: String)
+    func onCleartextBlocked(host: String, message: String, certainty: FluseCleartextCertainty)
 
     /// 受理後に届いた制御メッセージ。`reload` などは後続タスクが使う。
     func onMessage(_ message: FluseMessage)
 }
 
 extension FluseConnectionListener {
-    public func onCleartextBlocked(host: String, message: String) {}
+    public func onCleartextBlocked(
+        host: String,
+        message: String,
+        certainty: FluseCleartextCertainty
+    ) {}
 }

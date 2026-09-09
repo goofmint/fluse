@@ -555,7 +555,11 @@ final class RecordingListener: FluseConnectionListener {
         lock.lock(); messageList.append(message); lock.unlock()
     }
 
-    func onCleartextBlocked(host: String, message: String) {
+    func onCleartextBlocked(
+        host: String,
+        message: String,
+        certainty: FluseCleartextCertainty
+    ) {
         lock.lock(); cleartextBlockedList.append((host: host, message: message)); lock.unlock()
     }
 }

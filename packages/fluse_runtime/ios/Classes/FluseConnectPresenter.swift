@@ -193,12 +193,26 @@ public final class FluseConnectPresenter {
         failed(message: FluseConnectStrings.errorAuth)
     }
 
-    /// ATS に `ws://` が塞がれている。
+    /// ATS に `ws://` が塞がれている（かもしれない）。
     ///
     /// **そのまま出す。** `FluseATSCheck` が作る文言には直し方まで
     /// 書いてあるので、ここで丸めると意味が無くなる。
-    public func cleartextBlocked(message: String) -> [FluseConnectAction] {
-        failed(message: message)
+    ///
+    /// **事前判定では接続中の状態を解除しない。** `suspected` の時点では
+    /// 接続はまだ走っている。ここで `failed` にすると再スキャンが効く
+    /// ようになり、1本目の裏で2本目の `connect()` を始められてしまう。
+    /// 実際に失敗したと分かった（`confirmed`）時だけ失敗として扱う。
+    public func cleartextBlocked(
+        message: String,
+        certainty: FluseCleartextCertainty
+    ) -> [FluseConnectAction] {
+        switch certainty {
+        case .suspected:
+            // 案内文を出すだけ。connecting は落とさず、再スキャンも促さない。
+            return [isManualActive ? .showManualMessage(message) : .showScanMessage(message)]
+        case .confirmed:
+            return failed(message: message)
+        }
     }
 
     /// 切れた。
