@@ -25,7 +25,11 @@ final class DevicesCommand implements FluseCommand {
   }
 
   /// テストから差し替えるための作り手。
-  final DeviceInstaller Function(FluseContext context) installerFactory;
+  ///
+  /// **契約（`DeviceInstallerContract`）越しに持つ。** Android の具象を
+  /// 直接持つと、iOS 版（Issue #99）を足すときこのコマンドの型ごと分岐が
+  /// 要る（Task 10.2 / Issue #98）。
+  final DeviceInstallerContract Function(FluseContext context) installerFactory;
 
   /// 利用者への表示。
   final void Function(String line) onOutput;
@@ -60,7 +64,7 @@ final class DevicesCommand implements FluseCommand {
   Future<void> _showConnected(FluseContext context) async {
     onOutput('繋がっている端末:');
 
-    final List<AndroidDevice> devices;
+    final List<FluseDevice> devices;
     try {
       devices = await installerFactory(context).listDevices();
     } on DeviceInstallException catch (error) {
@@ -75,8 +79,8 @@ final class DevicesCommand implements FluseCommand {
     if (devices.isEmpty) {
       onOutput('  ありません');
     } else {
-      for (final AndroidDevice device in devices) {
-        onOutput('  ${device.label}');
+      for (final FluseDevice device in devices) {
+        onOutput('  ${device.name}');
       }
     }
     context.logger.info(
@@ -115,9 +119,11 @@ final class DevicesCommand implements FluseCommand {
     );
   }
 
-  static DeviceInstaller _defaultInstaller(FluseContext context) =>
-      DeviceInstaller(
-        processManager: context.processManager,
-        onMessage: (String line) => context.logger.info(line),
+  static DeviceInstallerContract _defaultInstaller(FluseContext context) =>
+      AndroidDeviceInstaller(
+        DeviceInstaller(
+          processManager: context.processManager,
+          onMessage: (String line) => context.logger.info(line),
+        ),
       );
 }
