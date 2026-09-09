@@ -74,7 +74,79 @@ android {
     write('.flutter-plugins-dependencies', jsonEncode(document));
   }
 
-  Future<ProjectInfo> analyze() => const ProjectAnalyzer().analyze(temp);
+  Future<ProjectInfo> analyze({
+    ProjectPlatform platform = ProjectPlatform.android,
+  }) => const ProjectAnalyzer().analyze(temp, platform: platform);
+
+  /// 最小の pubspec.yaml だけ置く（Flutter プロジェクトと判じられる分）。
+  void writePubspec({String name = 'counter_app'}) {
+    write('pubspec.yaml', '''
+name: $name
+description: テスト用
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+''');
+  }
+
+  /// `ios/Runner.xcodeproj/project.pbxproj` を置く。
+  ///
+  /// [bundleIdLine] に `PRODUCT_BUNDLE_IDENTIFIER = ...;` の行を渡す。
+  /// 渡さなければキー自体を持たないファイルになる。
+  ///
+  /// **Runner の PBXNativeTarget と構成リストまで書く。** 実際の
+  /// pbxproj と同じ構造にしておかないと、ターゲットを辿る経路を
+  /// 試したことにならない。[extraObjects] は Runner **より前**に置く。
+  /// ファイル順で先に見つかる値を採ってしまう誤りを検出するため。
+  void writePbxproj({String? bundleIdLine, String extraObjects = ''}) {
+    write(p.join('ios', 'Runner.xcodeproj', 'project.pbxproj'), '''
+// !\$*UTF8*\$!
+{
+	objects = {
+$extraObjects		97C146ED1CF9000F007C117D = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 97C147051CF9000F007C117D;
+			name = Runner;
+			productName = Runner;
+		};
+		97C147051CF9000F007C117D = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				97C147071CF9000F007C117D,
+			);
+		};
+		97C147071CF9000F007C117D = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				${bundleIdLine ?? '// PRODUCT_BUNDLE_IDENTIFIER は無い'}
+				PRODUCT_NAME = "\$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+	};
+}
+''');
+  }
+
+  /// `ios/Runner/Info.plist` を置く。
+  void writeInfoPlist(String bundleId) {
+    write(p.join('ios', 'Runner', 'Info.plist'), '''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>$bundleId</string>
+</dict>
+</plist>
+''');
+  }
 
   group('Flutter プロジェクト', () {
     test('pubspec と build.gradle.kts から素性を読む', () async {
@@ -358,6 +430,151 @@ android {
 ''');
 
       await expectLater(analyze(), throwsA(isA<ProjectAnalysisException>()));
+    });
+  });
+
+  group('iOS プロジェクト', () {
+    test('project.pbxproj から bundleId を読む', () async {
+      writePubspec();
+      writePbxproj(
+        bundleIdLine: 'PRODUCT_BUNDLE_IDENTIFIER = com.example.counter_app;',
+      );
+
+      final ProjectInfo info = await analyze(platform: ProjectPlatform.ios);
+
+      expect(info.bundleId, 'com.example.counter_app');
+      // android 経路は読んでいないので null のまま。
+      expect(info.applicationId, isNull);
+    });
+
+    test('変数参照 \$(...) は採らず、具体値の行を選ぶ', () async {
+      writePubspec();
+      // RunnerTests など、他ターゲットは変数参照だけのことがある。
+      writePbxproj(
+        bundleIdLine:
+            'PRODUCT_BUNDLE_IDENTIFIER = "\$(PRODUCT_BUNDLE_IDENTIFIER)";\n'
+            '\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.example.counter_app;',
+      );
+
+      final ProjectInfo info = await analyze(platform: ProjectPlatform.ios);
+
+      expect(info.bundleId, 'com.example.counter_app');
+    });
+
+    test(r'$(...) の後ろに文字が続く値も具体値に数えない', () async {
+      writePubspec();
+      // テストターゲットの既定値。`)` で終わらないので、前方一致と
+      // 後方一致の判定では具体値に見えてしまう。
+      writePbxproj(
+        bundleIdLine:
+            'PRODUCT_BUNDLE_IDENTIFIER = '
+            '"\$(PRODUCT_BUNDLE_IDENTIFIER).RunnerTests";\n'
+            '\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.example.counter_app;',
+      );
+
+      final ProjectInfo info = await analyze(platform: ProjectPlatform.ios);
+
+      expect(info.bundleId, 'com.example.counter_app');
+    });
+
+    test('Runner より前に別ターゲットの具体値があっても Runner を選ぶ', () async {
+      writePubspec();
+      // App Extension を足したプロジェクト。ファイル全体の最初の
+      // 具体値を採ると、拡張の ID を掴んでしまう。
+      writePbxproj(
+        bundleIdLine: 'PRODUCT_BUNDLE_IDENTIFIER = com.example.counter_app;',
+        extraObjects:
+            '\t\t11111111111111111111111A = {\n'
+            '\t\t\tisa = PBXNativeTarget;\n'
+            '\t\t\tbuildConfigurationList = 11111111111111111111111B;\n'
+            '\t\t\tname = NotificationService;\n'
+            '\t\t};\n'
+            '\t\t11111111111111111111111B = {\n'
+            '\t\t\tisa = XCConfigurationList;\n'
+            '\t\t\tbuildConfigurations = (\n'
+            '\t\t\t\t11111111111111111111111C,\n'
+            '\t\t\t);\n'
+            '\t\t};\n'
+            '\t\t11111111111111111111111C = {\n'
+            '\t\t\tisa = XCBuildConfiguration;\n'
+            '\t\t\tbuildSettings = {\n'
+            '\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = '
+            'com.example.counter_app.notify;\n'
+            '\t\t\t};\n'
+            '\t\t\tname = Debug;\n'
+            '\t\t};\n',
+      );
+
+      final ProjectInfo info = await analyze(platform: ProjectPlatform.ios);
+
+      expect(info.bundleId, 'com.example.counter_app');
+    });
+
+    test('project.pbxproj に具体値が無ければ Info.plist を見る', () async {
+      writePubspec();
+      // 既定のテンプレートは pbxproj 側の値をそのまま参照するだけ。
+      writePbxproj(
+        bundleIdLine:
+            'PRODUCT_BUNDLE_IDENTIFIER = "\$(PRODUCT_BUNDLE_IDENTIFIER)";',
+      );
+      writeInfoPlist('com.example.from_plist');
+
+      final ProjectInfo info = await analyze(platform: ProjectPlatform.ios);
+
+      expect(info.bundleId, 'com.example.from_plist');
+    });
+
+    test('どちらからも読めなければ弾く', () async {
+      writePubspec();
+      writePbxproj(
+        bundleIdLine:
+            'PRODUCT_BUNDLE_IDENTIFIER = "\$(PRODUCT_BUNDLE_IDENTIFIER)";',
+      );
+      writeInfoPlist(r'$(PRODUCT_BUNDLE_IDENTIFIER)');
+
+      await expectLater(
+        analyze(platform: ProjectPlatform.ios),
+        throwsA(
+          isA<ProjectAnalysisException>().having(
+            (ProjectAnalysisException e) => e.toString(),
+            'toString',
+            contains('CFBundleIdentifier'),
+          ),
+        ),
+      );
+    });
+
+    test('android/ も ios/ も無いときだけ弾く（既存の挙動のまま）', () async {
+      // ios/ しか無いプロジェクトで android 向けに解析すると、android の
+      // reader が自分の理由で弾く。「両方無い」時の一括の例外ではない。
+      writePubspec();
+      writePbxproj(
+        bundleIdLine: 'PRODUCT_BUNDLE_IDENTIFIER = com.example.counter_app;',
+      );
+
+      await expectLater(
+        analyze(),
+        throwsA(
+          isA<ProjectAnalysisException>().having(
+            (ProjectAnalysisException e) => e.toString(),
+            'toString',
+            contains('build.gradle'),
+          ),
+        ),
+      );
+
+      // 一方、ios 向けに解析すれば通る。
+      final ProjectInfo info = await analyze(platform: ProjectPlatform.ios);
+      expect(info.bundleId, 'com.example.counter_app');
+    });
+
+    test('Android 経路は既定引数のまま従来どおり動く', () async {
+      createFlutterProject();
+
+      final ProjectInfo info = await analyze();
+
+      expect(info.applicationId, 'com.example.counter_app');
+      expect(info.bundleId, isNull);
     });
   });
 }
