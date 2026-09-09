@@ -66,7 +66,32 @@ public enum FluseATSCheck {
     }
 
     /**
-     * 塞がれている時に出す文言。
+     * **事前判定で出す文言。断定しない。**
+     *
+     * この判定が見ているのは `NSAllowsLocalNetworking` の宣言だけで、
+     * `NSAllowsArbitraryLoads` や、対象ホストに
+     * `NSExceptionAllowsInsecureHTTPLoads` を付けた `NSExceptionDomains`
+     * があれば `ws://` は通る。**宣言が無い＝拒否される、ではない。**
+     * ここで「拒否されています」と書くと、実際には繋がる構成の利用者に
+     * 嘘のログと通知を渡すことになる。
+     *
+     * 断定してよいのは、実際に `URLError` -1022 が返ってきた後
+     * （[blockedMessage]）だけ。
+     */
+    public static func likelyBlockedMessage(host: String) -> String {
+        """
+        \(host) への平文接続が ATS（App Transport Security）に拒否される可能性があります。Info.plist に NSAllowsLocalNetworking の宣言が見当たりません。プレビューは ws:// を使います（設計 §10-4）。
+        他の ATS 例外（NSAllowsArbitraryLoads や NSExceptionDomains）で許可している場合は、このまま繋がります。繋がらない場合は NSAppTransportSecurity に次を足してください:
+          <key>NSAppTransportSecurity</key>
+          <dict>
+            <key>NSAllowsLocalNetworking</key>
+            <true/>
+          </dict>
+        """
+    }
+
+    /**
+     * 実際に拒否されたと分かった後に出す文言。
      *
      * **何をすればよいかまで書く。** 「ATS に拒否されました」だけでは、
      * 自分のアプリの Info.plist が原因だと気づけない

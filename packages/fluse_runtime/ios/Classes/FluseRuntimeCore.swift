@@ -113,12 +113,27 @@ public enum FluseRuntimeCore {
 
     /// `deviceToken` のような一般の秘密値をマスクする（設計 §6.1）。
     ///
-    /// **既存の `mask(_:)` をそのまま公開するだけ。** `maskAuthCode` は
-    /// VM Service の URI のパスセグメント専用の規則を持つため、それ以外の
-    /// 単純な値（Task 9.7 の `deviceToken` 等）をマスクしたい呼び出し側は
-    /// こちらを使う。ロジックは変えず、既存の private ヘルパーを再利用する
-    /// （デグレ防止: `mask(_:)` の中身には触らない）。
+    /// **UTF-16 のコード単位で数える。** サーバ側の `maskToken`
+    /// （`packages/fluse_server/lib/src/redact.dart`）は Dart の
+    /// `String.length` / `substring` を使っており、これは UTF-16 単位。
+    /// Swift の `count` / `prefix` は書記素クラスタ単位なので、
+    /// `😀abcde` を Swift の規則で切ると `😀abc***`、Dart の規則では
+    /// `😀ab***` となり、**同じ値なのに Swift 側が1文字多く残す。**
+    /// マスクの強さが実装言語で変わってはいけないので、こちらを
+    /// サーバ側に合わせる。
+    ///
+    /// **`mask(_:)` の中身には触らない。** あちらは `maskAuthCode` が使う
+    /// VM Service の URI 用で、既存のテストが挙動を固定している
+    /// （認証コードは ASCII なので、この差は現れない）。
     public static func maskSecret(_ value: String) -> String {
-        mask(value)
+        let units = Array(value.utf16)
+        if units.count < maskPrefixLength + 1 {
+            return "***"
+        }
+        // サロゲートペアの途中で切れた場合は置換文字になる。Dart 側は
+        // 孤立サロゲートをそのまま残すが、いずれにせよ元の文字は復元
+        // できないため、マスクの目的は達している。
+        let head = String(decoding: units[0..<maskPrefixLength], as: UTF16.self)
+        return head + "***"
     }
 }

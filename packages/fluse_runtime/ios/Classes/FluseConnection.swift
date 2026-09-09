@@ -261,10 +261,13 @@ public final class FluseConnection {
                 log: FluseRuntimeCore.log,
                 type: .default,
                 endpoint.host,
-                FluseATSCheck.blockedMessage(host: endpoint.host)
+                FluseATSCheck.likelyBlockedMessage(host: endpoint.host)
             )
             notifyListeners {
-                $0.onCleartextBlocked(host: endpoint.host, message: FluseATSCheck.blockedMessage(host: endpoint.host))
+                $0.onCleartextBlocked(
+                    host: endpoint.host,
+                    message: FluseATSCheck.likelyBlockedMessage(host: endpoint.host)
+                )
             }
         }
 

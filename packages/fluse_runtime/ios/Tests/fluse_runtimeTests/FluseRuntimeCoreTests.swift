@@ -87,4 +87,20 @@ final class FluseRuntimeCoreTests: XCTestCase {
 
         XCTAssertEqual(FluseRuntimeCore.latestVmServiceUri, second)
     }
+
+    /// マスクの強さが実装言語で変わらないこと。
+    ///
+    /// サーバ側の `maskToken` は Dart の `substring`（UTF-16 単位）で
+    /// 切る。Swift の `prefix` は書記素単位なので、そのまま書くと
+    /// `😀abcde` で Swift だけ1文字多く残ってしまう。
+    func testMaskSecretCountsUtf16UnitsLikeDart() {
+        // 😀 は UTF-16 で2単位。先頭4単位は "😀ab"。
+        XCTAssertEqual("😀ab***", FluseRuntimeCore.maskSecret("😀abcde"))
+    }
+
+    /// 短い値は丸ごと隠す（4文字を残すと元の値がそのまま残るため）。
+    func testMaskSecretHidesShortValuesEntirely() {
+        XCTAssertEqual("***", FluseRuntimeCore.maskSecret("abcd"))
+        XCTAssertEqual("abcd***", FluseRuntimeCore.maskSecret("abcde"))
+    }
 }

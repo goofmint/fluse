@@ -91,4 +91,29 @@ final class FluseATSCheckTests: XCTestCase {
 
         XCTAssertFalse(FluseATSCheck.isATSFailure(error))
     }
+
+    /// 事前判定の文言は断定しないこと。
+    ///
+    /// 見ているのは `NSAllowsLocalNetworking` の宣言だけで、
+    /// `NSAllowsArbitraryLoads` や `NSExceptionDomains` で許可していれば
+    /// 実際には繋がる。ここで「拒否されています」と言い切ると、
+    /// 繋がる構成の利用者に嘘を伝えることになる。
+    func testLikelyBlockedMessageDoesNotAssert() {
+        let message = FluseATSCheck.likelyBlockedMessage(host: "192.168.1.10")
+
+        XCTAssertTrue(message.contains("可能性があります"))
+        XCTAssertFalse(message.contains("拒否されています"))
+        // 他の例外設定で通る道があることも伝える。
+        XCTAssertTrue(message.contains("NSAllowsArbitraryLoads"))
+        // 直し方は事前判定でも書く。
+        XCTAssertTrue(message.contains("NSAllowsLocalNetworking"))
+    }
+
+    /// 受動判定（-1022 を受けた後）は断定してよい。
+    func testBlockedMessageAssertsAfterActualFailure() {
+        let message = FluseATSCheck.blockedMessage(host: "192.168.1.10")
+
+        XCTAssertTrue(message.contains("拒否されています"))
+        XCTAssertFalse(message.contains("可能性があります"))
+    }
 }
