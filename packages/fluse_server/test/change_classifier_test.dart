@@ -143,6 +143,66 @@ void main() {
 
       expect(c.classify('$root/pubspec.yaml'), ChangeKind.fingerprintTarget);
     });
+
+    test('Info.plist', () {
+      // `fluse_builder` の ios.plist と揃えてある。
+      final ChangeClassifier c = build();
+
+      expect(
+        c.classify('$root/ios/Runner/Info.plist'),
+        ChangeKind.fingerprintTarget,
+      );
+    });
+
+    test('ios/ 配下のその他の plist も指紋対象', () {
+      final ChangeClassifier c = build();
+
+      expect(
+        c.classify('$root/ios/Runner/GoogleService-Info.plist'),
+        ChangeKind.fingerprintTarget,
+      );
+    });
+
+    test('Podfile 系', () {
+      final ChangeClassifier c = build();
+
+      for (final String file in <String>['ios/Podfile', 'ios/Podfile.lock']) {
+        expect(
+          c.classify('$root/$file'),
+          ChangeKind.fingerprintTarget,
+          reason: file,
+        );
+      }
+    });
+
+    test('ios native ソース', () {
+      final ChangeClassifier c = build();
+
+      for (final String file in <String>[
+        'ios/Runner/AppDelegate.swift',
+        'ios/Runner/Bridge.h',
+        'ios/Runner/Bridge.m',
+        'ios/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json',
+        'ios/Runner.xcodeproj/project.pbxproj',
+      ]) {
+        expect(
+          c.classify('$root/$file'),
+          ChangeKind.fingerprintTarget,
+          reason: file,
+        );
+      }
+    });
+
+    test('ios 配下でも対象外のものはある', () {
+      final ChangeClassifier c = build();
+
+      // Storyboard は Runner/ 配下でも ios.native の対象外。
+      expect(
+        c.classify('$root/ios/Runner/Base.lproj/Main.storyboard'),
+        ChangeKind.ignored,
+      );
+      expect(c.classify('$root/ios/README.md'), ChangeKind.ignored);
+    });
   });
 
   group('生成物', () {
@@ -197,6 +257,22 @@ void main() {
         c.classify('$root/lib/build/generated.dart'),
         ChangeKind.dartSource,
       );
+    });
+
+    test('CocoaPods / Xcode の生成物は拾わない', () {
+      // Pods-Runner-Info.plist のような plist も生成されるので、
+      // 拾ってしまうと自分の生成物で監視が止まり続ける。
+      final ChangeClassifier c = build();
+
+      for (final String file in <String>[
+        'ios/Pods/Target Support Files/Pods-Runner/Pods-Runner-Info.plist',
+        'ios/Pods/Manifest.lock',
+        'ios/.symlinks/plugins/foo/ios/Classes/Foo.swift',
+        'ios/DerivedData/Build/Products/x.plist',
+        'ios/Flutter/ephemeral/Flutter.podspec',
+      ]) {
+        expect(c.classify('$root/$file'), ChangeKind.ignored, reason: file);
+      }
     });
   });
 

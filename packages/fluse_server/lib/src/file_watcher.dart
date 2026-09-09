@@ -195,6 +195,8 @@ final class FileWatcher {
     add('lib');
     // 指紋対象のうち android/ 配下は全てここに入る。
     add('android');
+    // 指紋対象のうち ios/ 配下は全てここに入る。
+    add('ios');
     for (final String file in ChangeClassifier.fingerprintFiles) {
       add(file);
     }
