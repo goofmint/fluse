@@ -477,6 +477,10 @@ private struct TunnelTestError: Error, CustomStringConvertible {
 /// `FluseTunnel` を起動し、`body` の実行中だけ生かして必ず `close()` まで
 /// 面倒を見る。Kotlin 版 `FluseTunnelTest.withTunnel` に相当する。
 @available(iOS 13.0, macOS 11.0, *)
+/// トンネルを立ててから [body] を走らせ、終わったら必ず畳む。
+///
+/// [timeout] は安全弁。実装側に不具合があって止まったとき、テスト
+/// スイート全体を巻き込んで固まらせないために置いている。
 private func withTunnel(
     port: UInt16,
     channel: FakeTunnelChannel,
@@ -573,6 +577,7 @@ private final class TaskRaceSettlement: @unchecked Sendable {
         self.continuation = continuation
     }
 
+    /// 先に決まった側だけを採る。二度目以降は捨てる。
     func settle(_ value: Bool) {
         lock.lock()
         defer { lock.unlock() }

@@ -126,6 +126,11 @@ public actor FluseTunnel {
     private var terminationWaiters: [CheckedContinuation<Void, Error>] = []
     private var terminationResult: Result<Void, Error>?
 
+    /// トンネルを組み立てる。
+    ///
+    /// [vmServicePort] は端末内で VM Service が待ち受けているポート。
+    /// **0 は弾く。** 「まだ分からない」を 0 で表して渡されると、
+    /// 接続先が無いまま open を受けて初めて気づくことになる。
     public init(vmServicePort: UInt16, channel: TunnelChannel) throws {
         guard vmServicePort >= 1 else {
             // **ここで弾かないと open のたびに不正なポートで接続を試みる。**
@@ -234,10 +239,19 @@ public actor FluseTunnel {
         }
     }
 
+    /// 終了理由を1つだけ記録する。
+    ///
+    /// **最初の理由を残す。** 畳む過程で後続のエラーが続けて起きるが、
+    /// 上書きすると本当の原因が最後の1つに置き換わってしまう。
     private func setTerminationError(_ error: Error) {
         terminationError = error
     }
 
+    /// [waitUntilDone] で待っている者をまとめて起こす。
+    ///
+    /// Swift の `CheckedContinuation` は一度しか再開できないため、
+    /// Kotlin の `CompletableDeferred` のように「後から何度でも待てる値」
+    /// にはできない。待ち手をリストで抱えてここで一括解決する。
     private func resolveTerminationWaiters() {
         let waiters = terminationWaiters
         terminationWaiters.removeAll()
@@ -252,6 +266,11 @@ public actor FluseTunnel {
 
     // ------------------------------------------------------- WebSocket -> TCP
 
+    /// WebSocket から届いた1フレームを捌く。
+    ///
+    /// **壊れたフレームでトンネル全体を落とさない。** 解けなかったものは
+    /// そのフレームだけ捨てる。相手が1つ壊れた電文を送っただけで、
+    /// 動いている他のストリームまで巻き添えにする理由が無い。
     private func handleIncomingFrame(_ bytes: [UInt8]) async {
         guard let frame = try? TunnelFrame.decode(bytes) else {
             // 壊れたフレームはどのストリームのものかも分からない。
@@ -312,6 +331,10 @@ public actor FluseTunnel {
         }
     }
 
+    /// data フレームの中身を TCP 側へ流す。
+    ///
+    /// 知らない streamId 宛なら close を返す。**黙って捨てない。**
+    /// 相手は届いたと思って待ち続けるため、閉じたことを伝える必要がある。
     private func writeToStream(_ frame: TunnelFrame) async {
         guard let stream = streams[frame.streamId] else {
             // 既に閉じたストリーム宛。相手がまだ知らないだけなので伝える。
@@ -405,6 +428,10 @@ public actor FluseTunnel {
         }
     }
 
+    /// ストリームを1つ畳む。
+    ///
+    /// [notifyPeer] が true なら close フレームを送り返す。相手から
+    /// close を受けて畳む場合は false にする。**応酬しない。**
     private func closeStream(streamId: UInt32, notifyPeer: Bool) async {
         guard let stream = streams.removeValue(forKey: streamId) else { return }
 

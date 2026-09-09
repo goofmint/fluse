@@ -18,11 +18,14 @@ public struct TunnelException: Error, CustomStringConvertible, Equatable {
     /// ワイヤ表現や制御ロジックには関与しない）。
     public let cause: NSError?
 
+    /// [cause] は元の失敗。握り潰さずに繋いでおくと、TCP 側の
+    /// エラーなのかフレームの解釈失敗なのかが後から辿れる。
     public init(_ message: String, cause: Error? = nil) {
         self.message = message
         self.cause = cause.map { $0 as NSError }
     }
 
+    /// ログと例外表示に出る文字列。[cause] があれば併記する。
     public var description: String {
         if let cause = cause {
             return "トンネル: \(message) (\(cause))"
