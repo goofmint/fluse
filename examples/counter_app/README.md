@@ -89,10 +89,16 @@ $ flutter build ios --debug --no-codesign
 
 ### シミュレータでの実行
 
+一覧に出る UUID を控えて渡す。**`<simulator id>` のような山括弧のまま
+実行しないこと。** シェルが `<` を入力リダイレクトと解釈して、ID が
+`flutter run` に渡らない。
+
 ```console
 $ xcrun simctl list devices available | grep iPhone
+    iPhone 16 (A1B2C3D4-1234-5678-9ABC-DEF012345678) (Shutdown)
 $ open -a Simulator
-$ flutter run -d <simulator id>
+$ SIMULATOR_UUID=A1B2C3D4-1234-5678-9ABC-DEF012345678
+$ flutter run -d "$SIMULATOR_UUID"
 ```
 
 ### `path_provider` の解決経路について
