@@ -99,12 +99,29 @@ flutter:
   ///
   /// [bundleIdLine] に `PRODUCT_BUNDLE_IDENTIFIER = ...;` の行を渡す。
   /// 渡さなければキー自体を持たないファイルになる。
-  void writePbxproj({String? bundleIdLine}) {
+  ///
+  /// **Runner の PBXNativeTarget と構成リストまで書く。** 実際の
+  /// pbxproj と同じ構造にしておかないと、ターゲットを辿る経路を
+  /// 試したことにならない。[extraObjects] は Runner **より前**に置く。
+  /// ファイル順で先に見つかる値を採ってしまう誤りを検出するため。
+  void writePbxproj({String? bundleIdLine, String extraObjects = ''}) {
     write(p.join('ios', 'Runner.xcodeproj', 'project.pbxproj'), '''
 // !\$*UTF8*\$!
 {
 	objects = {
-		97C147071CF9000F007C117D /* Debug */ = {
+$extraObjects		97C146ED1CF9000F007C117D = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 97C147051CF9000F007C117D;
+			name = Runner;
+			productName = Runner;
+		};
+		97C147051CF9000F007C117D = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				97C147071CF9000F007C117D,
+			);
+		};
+		97C147071CF9000F007C117D = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				${bundleIdLine ?? '// PRODUCT_BUNDLE_IDENTIFIER は無い'}
@@ -437,6 +454,55 @@ android {
         bundleIdLine:
             'PRODUCT_BUNDLE_IDENTIFIER = "\$(PRODUCT_BUNDLE_IDENTIFIER)";\n'
             '\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.example.counter_app;',
+      );
+
+      final ProjectInfo info = await analyze(platform: ProjectPlatform.ios);
+
+      expect(info.bundleId, 'com.example.counter_app');
+    });
+
+    test(r'$(...) の後ろに文字が続く値も具体値に数えない', () async {
+      writePubspec();
+      // テストターゲットの既定値。`)` で終わらないので、前方一致と
+      // 後方一致の判定では具体値に見えてしまう。
+      writePbxproj(
+        bundleIdLine:
+            'PRODUCT_BUNDLE_IDENTIFIER = '
+            '"\$(PRODUCT_BUNDLE_IDENTIFIER).RunnerTests";\n'
+            '\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.example.counter_app;',
+      );
+
+      final ProjectInfo info = await analyze(platform: ProjectPlatform.ios);
+
+      expect(info.bundleId, 'com.example.counter_app');
+    });
+
+    test('Runner より前に別ターゲットの具体値があっても Runner を選ぶ', () async {
+      writePubspec();
+      // App Extension を足したプロジェクト。ファイル全体の最初の
+      // 具体値を採ると、拡張の ID を掴んでしまう。
+      writePbxproj(
+        bundleIdLine: 'PRODUCT_BUNDLE_IDENTIFIER = com.example.counter_app;',
+        extraObjects:
+            '\t\t11111111111111111111111A = {\n'
+            '\t\t\tisa = PBXNativeTarget;\n'
+            '\t\t\tbuildConfigurationList = 11111111111111111111111B;\n'
+            '\t\t\tname = NotificationService;\n'
+            '\t\t};\n'
+            '\t\t11111111111111111111111B = {\n'
+            '\t\t\tisa = XCConfigurationList;\n'
+            '\t\t\tbuildConfigurations = (\n'
+            '\t\t\t\t11111111111111111111111C,\n'
+            '\t\t\t);\n'
+            '\t\t};\n'
+            '\t\t11111111111111111111111C = {\n'
+            '\t\t\tisa = XCBuildConfiguration;\n'
+            '\t\t\tbuildSettings = {\n'
+            '\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = '
+            'com.example.counter_app.notify;\n'
+            '\t\t\t};\n'
+            '\t\t\tname = Debug;\n'
+            '\t\t};\n',
       );
 
       final ProjectInfo info = await analyze(platform: ProjectPlatform.ios);

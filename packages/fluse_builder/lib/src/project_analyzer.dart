@@ -223,13 +223,17 @@ final class ProjectAnalyzer {
     r'''<key>\s*CFBundleIdentifier\s*</key>\s*<string>([^<]+)</string>''',
   );
 
-  /// `$(...)` の変数参照かどうか。
+  /// 変数参照を含むかどうか。
   ///
   /// `project.pbxproj` は Debug / Release / Profile の3つの構成を持つのが
   /// 普通で、`Info.plist` の既定値もビルド設定側の値をこの記法で参照する。
   /// 具体値の行が見つかるまで、この形は読み飛ばす。
-  static bool _isVariableReference(String value) =>
-      value.startsWith(r'$(') && value.endsWith(')');
+  ///
+  /// **前方一致・後方一致では足りない。** テストターゲットの既定値は
+  /// `$(PRODUCT_BUNDLE_IDENTIFIER).RunnerTests` のように参照の後ろに
+  /// 文字が続く。`)` で終わらないからと具体値に数えると、この値が
+  /// bundleId になってしまう。
+  static bool _isVariableReference(String value) => value.contains(r'$(');
 
   /// 一致した中から、変数参照でない最初の値を返す。
   static String? _firstConcreteValue(Iterable<RegExpMatch> matches) {
@@ -237,6 +241,114 @@ final class ProjectAnalyzer {
       final String value = match.group(1)!.trim();
       if (!_isVariableReference(value)) {
         return value;
+      }
+    }
+    return null;
+  }
+
+  /// `project.pbxproj` の1つのオブジェクト宣言（`<ID> = {`）。
+  ///
+  /// コメントを落とした後の形を見る。ID は 24 桁の16進。
+  static final RegExp _objectHeadPattern = RegExp(
+    r'([0-9A-Fa-f]{24})\s*=\s*\{',
+  );
+
+  /// `buildConfigurationList = <ID>;`
+  static final RegExp _configurationListPattern = RegExp(
+    r'buildConfigurationList\s*=\s*([0-9A-Fa-f]{24})\s*;',
+  );
+
+  /// `buildConfigurations = ( <ID>, <ID>, );`
+  static final RegExp _buildConfigurationsPattern = RegExp(
+    r'buildConfigurations\s*=\s*\(([^)]*)\)',
+  );
+
+  /// `name = Runner;` / `name = "Runner";`
+  static final RegExp _runnerNamePattern = RegExp(r'name\s*=\s*"?Runner"?\s*;');
+
+  /// Runner ターゲットの構成だけから bundle identifier を読む。
+  ///
+  /// **ファイル全体の最初の具体値では駄目。** App Extension や
+  /// Watch App を足したプロジェクトでは、Runner より前に別ターゲットの
+  /// 具体値が現れる。それを掴むと、別アプリの ID で署名や配布を
+  /// しようとして落ちる。
+  ///
+  /// Runner の `PBXNativeTarget` を見つけられない場合（`PBXNativeTarget`
+  /// を持たない最小の pbxproj など）に限り、従来どおりファイル全体を
+  /// 走査する。**その場合も変数参照は読み飛ばす。**
+  static String? _runnerBundleId(String source) {
+    final Map<String, String> objects = _pbxObjects(source);
+
+    String? runner;
+    for (final String body in objects.values) {
+      if (body.contains('isa = PBXNativeTarget;') &&
+          _runnerNamePattern.hasMatch(body)) {
+        runner = body;
+        break;
+      }
+    }
+    if (runner == null) {
+      return _firstConcreteValue(_bundleIdPattern.allMatches(source));
+    }
+
+    final RegExpMatch? listMatch = _configurationListPattern.firstMatch(runner);
+    final String? listBody = listMatch == null
+        ? null
+        : objects[listMatch.group(1)!];
+    if (listBody == null) {
+      return null;
+    }
+
+    final RegExpMatch? idsMatch = _buildConfigurationsPattern.firstMatch(
+      listBody,
+    );
+    if (idsMatch == null) {
+      return null;
+    }
+
+    for (final String id in RegExp(
+      r'[0-9A-Fa-f]{24}',
+    ).allMatches(idsMatch.group(1)!).map((RegExpMatch m) => m.group(0)!)) {
+      final String? body = objects[id];
+      if (body == null) {
+        continue;
+      }
+      final String? value = _firstConcreteValue(
+        _bundleIdPattern.allMatches(body),
+      );
+      if (value != null) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  /// `<ID> = { ... };` を ID から中身へ引ける形にする。
+  ///
+  /// 入れ子の `{}` を数えて対応する `}` までを1つの塊として取る。
+  static Map<String, String> _pbxObjects(String source) {
+    final Map<String, String> objects = <String, String>{};
+    for (final RegExpMatch match in _objectHeadPattern.allMatches(source)) {
+      final String? body = _balancedBlock(source, match.end - 1);
+      if (body != null) {
+        objects[match.group(1)!] = body;
+      }
+    }
+    return objects;
+  }
+
+  /// [open] の位置にある `{` に対応する `}` までの中身を返す。
+  static String? _balancedBlock(String source, int open) {
+    int depth = 0;
+    for (int i = open; i < source.length; i++) {
+      final String ch = source[i];
+      if (ch == '{') {
+        depth++;
+      } else if (ch == '}') {
+        depth--;
+        if (depth == 0) {
+          return source.substring(open + 1, i);
+        }
       }
     }
     return null;
@@ -262,9 +374,7 @@ final class ProjectAnalyzer {
         _commentPattern,
         '',
       );
-      final String? bundleId = _firstConcreteValue(
-        _bundleIdPattern.allMatches(source),
-      );
+      final String? bundleId = _runnerBundleId(source);
       if (bundleId != null) {
         return bundleId;
       }
