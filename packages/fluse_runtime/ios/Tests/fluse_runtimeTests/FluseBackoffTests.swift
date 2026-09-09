@@ -26,3 +26,29 @@ final class FluseBackoffTests: XCTestCase {
         XCTAssertEqual(1_000, backoff.next())
     }
 }
+
+extension FluseBackoffTests {
+    /// 極端な上限でも落ちないこと。
+    ///
+    /// Kotlin の Long 乗算は溢れても一周するだけだが、Swift の Int 乗算は
+    /// トラップする。同じ式のまま移すと、ここだけ挙動が「落ちる」に化ける。
+    func testDoesNotTrapOnHugeBounds() {
+        let backoff = FluseBackoff(initialMs: Int.max, maxMs: Int.max)
+
+        XCTAssertEqual(backoff.next(), Int.max)
+        XCTAssertEqual(backoff.next(), Int.max)
+    }
+
+    /// 上限に届く手前までは倍で伸びること（正常な入力での結果は不変）。
+    func testDoublesUntilBound() {
+        let backoff = FluseBackoff()
+
+        XCTAssertEqual(backoff.next(), 1000)
+        XCTAssertEqual(backoff.next(), 2000)
+        XCTAssertEqual(backoff.next(), 4000)
+        XCTAssertEqual(backoff.next(), 8000)
+        XCTAssertEqual(backoff.next(), 16000)
+        XCTAssertEqual(backoff.next(), 30000)
+        XCTAssertEqual(backoff.next(), 30000)
+    }
+}

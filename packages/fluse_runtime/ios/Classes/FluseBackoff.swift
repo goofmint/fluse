@@ -31,8 +31,14 @@ public final class FluseBackoff {
     public func next() -> Int {
         if currentMs == 0 {
             currentMs = initialMs
+        } else if currentMs > maxMs / 2 {
+            // **倍にしてから比べない。** Kotlin の Long 乗算は溢れても
+            // 黙って一周するだけだが、Swift の Int 乗算はトラップして
+            // その場で落ちる。同じ式でも失敗の仕方が違うので、溢れる形に
+            // ならない順序で書く。上限に届く入力での結果は変わらない。
+            currentMs = maxMs
         } else {
-            currentMs = min(currentMs * 2, maxMs)
+            currentMs = currentMs * 2
         }
         return currentMs
     }
