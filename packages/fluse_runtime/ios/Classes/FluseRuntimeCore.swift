@@ -64,9 +64,17 @@ public enum FluseRuntimeCore {
         // logcat は Dart 側の redact を通らないため、ここで必ず伏せる。
         os_log("VM Service を受け取りました: %{public}@", log: log, type: .info, maskAuthCode(uri))
 
-        // TODO(Issue #91): iOS 側の接続（Android の `FluseConnection` 相当）が
-        // できたら、ここから転送する。現時点ではまだ無いため、最新の URI を
-        // 保持するところまでが本タスクの範囲。
+        // **接続がまだ無くても取りこぼさない。** `storedVmServiceUri` は
+        // 型に持たせてあるので、後から作られる `FluseConnection`
+        // （起動フック側が `FluseConnection.getOrCreate` した直後に
+        // `latestVmServiceUri` を読んで送る）にも渡せる。ここでは、既に
+        // 接続が存在する場合（再接続後の Hot Restart など）に限って
+        // その場で転送する。`FluseConnection.vmServiceReady` 自身が
+        // 「受理前なら送らず保持する」「同じ URI の再送は無視する」を
+        // 見ているので、ここで受理済みかどうかを気にする必要は無い
+        // （Task 9.5 / Issue #93 で解消: `FluseConnection` が用意される
+        // 前は転送先が無かったが、Task 9.3 で用意済み）。
+        FluseConnection.instance?.vmServiceReady(uri)
     }
 
     /// VM Service の URI から認証コードを伏せる。

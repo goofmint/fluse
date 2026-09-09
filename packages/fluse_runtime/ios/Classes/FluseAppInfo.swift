@@ -74,3 +74,40 @@ public struct FluseAppInfo: Equatable {
         return value
     }
 }
+
+extension FluseAppInfo {
+    /**
+     * `Bundle` から読み込む（Android 版の `FluseAppInfo.load(context:)` に相当）。
+     *
+     * Task 9.2 の時点では「実行環境（Flutter エンジン込みのアプリ本体）が
+     * 無いと確かめられない」として対象外にしていたが、Task 9.5 の起動フック
+     * ／ペアリング画面はこの値が無いと `hello` そのものを組み立てられず
+     * 何も判断できない。パース自体は既存の `parse(text:)` を再利用し、
+     * ここで足すのは「どこから読むか」だけに絞る。
+     *
+     * **`Bundle` から先は `Foundation` の API だけで書けるため、`UIKit` を
+     * 要らない。** macOS の `swift test` からも呼べるが、`Bundle.main` は
+     * テスト実行時にはこのリソースを持たないため、実際に読めることの確認は
+     * 実機・シミュレータ側でのみ行える（後述の報告を参照）。
+     *
+     * **既定値では埋めない。** 読めなければそのまま投げる。呼び出し側
+     * （起動フック／ペアリング画面）はこれを捕まえてエラー表示に倒す。
+     */
+    public static func load(bundle: Bundle = .main) throws -> FluseAppInfo {
+        // `assetPath` は `"fluse/app_info.json"`。`Bundle.url(forResource:)` は
+        // 拡張子とサブディレクトリを分けて渡す必要があるため、ここで分解する。
+        guard let url = bundle.url(forResource: "app_info", withExtension: "json", subdirectory: "fluse") else {
+            throw FluseProtocolException("\(assetPath) が見つかりません")
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw FluseProtocolException("\(assetPath) を読めません: \(error)")
+        }
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw FluseProtocolException("\(assetPath) を UTF-8 として読めません")
+        }
+        return try parse(text: text)
+    }
+}

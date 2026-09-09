@@ -12,6 +12,17 @@ final class FluseRuntimeCoreTests: XCTestCase {
     /// **直書きしない。** ダミーでも接続トークンの literal は置かない規約
     /// （設計 §6.1）。パスセグメントそのものが資格情報なので、形だけ
     /// 本物に似せて実行時に作る。
+    /// テスト用の使い捨てトークン。
+    ///
+    /// **リテラルを置かない。** ダミーでも `pairingToken` として送られる
+    /// 値なので、.coderabbit.yaml の「secret のハードコーディング禁止」に
+    /// 当たる。実行時に作れば、そもそも混入しようがない。
+    private func secret() -> String {
+        (0..<16)
+            .map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }
+            .joined()
+    }
+
     private func authCode(_ length: Int = 12) -> String {
         (0..<length)
             .map { index -> String in
@@ -102,5 +113,62 @@ final class FluseRuntimeCoreTests: XCTestCase {
     func testMaskSecretHidesShortValuesEntirely() {
         XCTAssertEqual("***", FluseRuntimeCore.maskSecret("abcd"))
         XCTAssertEqual("abcd***", FluseRuntimeCore.maskSecret("abcde"))
+    }
+
+    // ------------------------------------------------------ FluseConnection への転送
+
+    /// Task 9.5（Issue #93）で解消した TODO: `FluseConnection` が用意された
+    /// （Task 9.3）以上、受け取った URI はその場で転送されること。
+    ///
+    /// `FluseConnection.instance` はプロセス全体で共有される静的な状態
+    /// なので、他のテストへ漏れないよう必ず `install(nil)` で後始末する
+    /// （`FluseConnectionTests.swift` / `FluseATSCheckWiringTests.swift` は
+    /// この静的インスタンスを使わないため、通常は競合しないが念のため）。
+    func testForwardsToTheInstalledConnectionWhenAlreadyAuthenticated() {
+        let store = MemoryConnectionStore()
+        let sockets = FakeSocketFactory()
+        let device = FluseDeviceInfo(deviceId: "a1b2c3d4e5f60718", deviceName: "iPhone")
+        let appInfo = FluseAppInfo(
+            projectId: "0123456789abcdef",
+            flutterRevision: "00b0c91f",
+            dartVersion: "3.5.0",
+            appVersion: "fedcba9876543210"
+        )
+        let connection = FluseConnection(
+            store: store,
+            device: device,
+            appInfo: appInfo,
+            socketFactory: sockets,
+            scheduler: RecordingScheduler()
+        )
+        FluseConnection.install(connection)
+        defer { FluseConnection.install(nil) }
+
+        connection.connect(
+            endpoint: FluseEndpoint(host: "127.0.0.1", port: 1),
+            pairingToken: secret()
+        )
+        sockets.latest.open()
+        sockets.latest.receive(AcceptMessage(sessionId: "s-1", heartbeatIntervalMs: 1_000))
+
+        let code = authCode()
+        let uri = "http://127.0.0.1:1/\(code)/"
+        FluseRuntimeCore.handleVmServiceReady(uri)
+
+        let sent: VmServiceReadyMessage = sockets.latest.sentAs(1)
+        XCTAssertEqual(uri, sent.vmServiceUri)
+    }
+
+    /// 接続が無い間に届いた URI は、型に持たせた `latestVmServiceUri` に
+    /// 残るだけで例外にはならない（`FluseConnection.instance` が `nil` の
+    /// ときに転送先を強制的に必要としないこと）。
+    func testDoesNotThrowWhenNoConnectionIsInstalled() {
+        FluseConnection.install(nil)
+        let code = authCode()
+        let uri = "http://127.0.0.1:1/\(code)/"
+
+        FluseRuntimeCore.handleVmServiceReady(uri)
+
+        XCTAssertEqual(FluseRuntimeCore.latestVmServiceUri, uri)
     }
 }
