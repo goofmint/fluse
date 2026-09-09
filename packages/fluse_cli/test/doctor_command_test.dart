@@ -253,6 +253,7 @@ void main() {
 
     test('iOS 用の検査が並ぶ', () async {
       _writeInfoPlist(temp, hasUsageKey: true, hasAllowsLocalNetworking: true);
+      _writePbxproj(temp, developmentTeam: 'ABCDE12345');
 
       final int code = await runDoctor(
         on: context(platform: FluseTargetPlatform.ios),
@@ -263,6 +264,7 @@ void main() {
         'Xcode',
         'xcrun devicectl',
         'ios/',
+        'DEVELOPMENT_TEAM',
         'Info.plist: NSLocalNetworkUsageDescription',
         'Info.plist: NSAllowsLocalNetworking',
         'pod',
@@ -352,6 +354,44 @@ void main() {
       expect(text(), contains('✗ Info.plist: NSAllowsLocalNetworking'));
     });
 
+    test('DEVELOPMENT_TEAM が入っていれば通す', () async {
+      _writeInfoPlist(temp, hasUsageKey: true, hasAllowsLocalNetworking: true);
+      _writePbxproj(temp, developmentTeam: 'ABCDE12345');
+
+      expect(
+        await runDoctor(on: context(platform: FluseTargetPlatform.ios)),
+        0,
+      );
+
+      expect(text(), contains('✓ DEVELOPMENT_TEAM: ABCDE12345'));
+    });
+
+    test('DEVELOPMENT_TEAM が空なら未設定として指摘する', () async {
+      _writeInfoPlist(temp, hasUsageKey: true, hasAllowsLocalNetworking: true);
+      // Xcode は Team を外すと空文字を残す。キーの有無では判断できない。
+      _writePbxproj(temp, developmentTeam: '');
+
+      expect(
+        await runDoctor(on: context(platform: FluseTargetPlatform.ios)),
+        1,
+      );
+
+      expect(text(), contains('✗ DEVELOPMENT_TEAM'));
+      expect(text(), contains('シミュレータだけなら不要です'));
+    });
+
+    test('project.pbxproj が無ければ指摘する', () async {
+      _writeInfoPlist(temp, hasUsageKey: true, hasAllowsLocalNetworking: true);
+
+      expect(
+        await runDoctor(on: context(platform: FluseTargetPlatform.ios)),
+        1,
+      );
+
+      expect(text(), contains('✗ DEVELOPMENT_TEAM'));
+      expect(text(), contains('project.pbxproj がありません'));
+    });
+
     test('ATS の外に NSAllowsLocalNetworking があっても成功にしない', () async {
       _writeInfoPlistWithLocalNetworkingOutsideAts(temp);
 
@@ -371,6 +411,8 @@ void main() {
       final File file = File(p.join(temp.path, 'ios', 'Runner', 'Info.plist'));
       file.parent.createSync(recursive: true);
       file.writeAsBytesSync(<int>[0xc3, 0x28, 0xa0, 0xa1]);
+      // ここで見たいのは Info.plist だけ。他は揃えておく。
+      _writePbxproj(temp, developmentTeam: 'ABCDE12345');
 
       expect(
         await runDoctor(on: context(platform: FluseTargetPlatform.ios)),
@@ -426,6 +468,26 @@ void _writeInfoPlist(
     ..writeln('</plist>');
 
   file.writeAsStringSync(buffer.toString());
+}
+
+/// `ios/Runner.xcodeproj/project.pbxproj` を演じる。
+///
+/// [developmentTeam] に空文字を渡すと、Xcode が Team を外したときに
+/// 残す `DEVELOPMENT_TEAM = "";` を書く。
+void _writePbxproj(Directory root, {required String developmentTeam}) {
+  final File file = File(
+    p.join(root.path, 'ios', 'Runner.xcodeproj', 'project.pbxproj'),
+  );
+  file.parent.createSync(recursive: true);
+  file.writeAsStringSync(
+    '// !\$*UTF8*\$!\n'
+    '{\n'
+    '\tbuildSettings = {\n'
+    '\t\tPRODUCT_BUNDLE_IDENTIFIER = com.example.counterApp;\n'
+    '\t\tDEVELOPMENT_TEAM = "$developmentTeam";\n'
+    '\t};\n'
+    '}\n',
+  );
 }
 
 /// `NSAllowsLocalNetworking` を ATS の `<dict>` の外（root 直下）に

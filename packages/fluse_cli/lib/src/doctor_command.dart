@@ -93,6 +93,7 @@ final class DoctorCommand implements FluseCommand {
             ..add(await _checkXcode(context))
             ..add(await _checkDevicectl(context))
             ..add(_checkIosDir(context))
+            ..add(_checkDevelopmentTeam(context))
             ..addAll(_checkInfoPlist(context))
             ..add(_checkExecutable(context, 'pod', 'CocoaPods'));
       }
@@ -215,6 +216,74 @@ final class DoctorCommand implements FluseCommand {
       );
     }
     return const DoctorCheck.ok(label);
+  }
+
+  /// 署名チームを解決できるか（Issue #104）。
+  ///
+  /// 実機ビルドは `DEVELOPMENT_TEAM` が無いと Xcode の automatic signing に
+  /// 入れず、`No signing certificate` で落ちる。**シミュレータだけなら
+  /// 要らない**ので、失敗の文面でその区別を伝える。
+  ///
+  /// **`xcodebuild -showBuildSettings` は動かさない。** Gradle を動かさない
+  /// のと同じ方針で、`project.pbxproj` をテキストとして読む。数秒かかる
+  /// コマンドを doctor の中で待たせない。
+  DoctorCheck _checkDevelopmentTeam(FluseContext context) {
+    const String label = 'DEVELOPMENT_TEAM';
+    final File project = File(
+      p.join(
+        context.projectRoot.path,
+        'ios',
+        'Runner.xcodeproj',
+        'project.pbxproj',
+      ),
+    );
+
+    if (!project.existsSync()) {
+      return const DoctorCheck.failed(
+        label,
+        detail:
+            'ios/Runner.xcodeproj/project.pbxproj がありません。'
+            '`flutter create --platforms=ios .` を実行してください',
+      );
+    }
+
+    final String contents;
+    try {
+      contents = project.readAsStringSync();
+    } on Object catch (error) {
+      return DoctorCheck.failed(
+        label,
+        detail: 'ios/Runner.xcodeproj/project.pbxproj を読めません: $error',
+      );
+    }
+
+    final String? team = _developmentTeam(contents);
+    if (team == null) {
+      return const DoctorCheck.failed(
+        label,
+        detail:
+            '解決できません。実機ビルドには署名チームが要ります。'
+            'Xcode で Runner > Signing & Capabilities > Team を選んでください'
+            '（シミュレータだけなら不要です）',
+      );
+    }
+    return DoctorCheck.ok(label, detail: team);
+  }
+
+  /// `project.pbxproj` から `DEVELOPMENT_TEAM` の値を拾う。
+  ///
+  /// 構成ごとに複数書かれることがある。**空文字は「未設定」として
+  /// 扱う。** Xcode は Team を外したときに `DEVELOPMENT_TEAM = "";` を
+  /// 残すため、キーがあることだけでは解決できたことにならない。
+  static String? _developmentTeam(String contents) {
+    final RegExp pattern = RegExp(r'DEVELOPMENT_TEAM\s*=\s*"?([^";\n]*)"?\s*;');
+    for (final RegExpMatch match in pattern.allMatches(contents)) {
+      final String value = (match.group(1) ?? '').trim();
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+    return null;
   }
 
   static const String _localNetworkUsageKey = 'NSLocalNetworkUsageDescription';
