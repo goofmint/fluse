@@ -479,15 +479,17 @@ void _writePbxproj(Directory root, {required String developmentTeam}) {
     p.join(root.path, 'ios', 'Runner.xcodeproj', 'project.pbxproj'),
   );
   file.parent.createSync(recursive: true);
-  file.writeAsStringSync(
-    '// !\$*UTF8*\$!\n'
-    '{\n'
-    '\tbuildSettings = {\n'
-    '\t\tPRODUCT_BUNDLE_IDENTIFIER = com.example.counterApp;\n'
-    '\t\tDEVELOPMENT_TEAM = "$developmentTeam";\n'
-    '\t};\n'
-    '}\n',
-  );
+
+  final StringBuffer buffer = StringBuffer()
+    ..writeln('// !\$*UTF8*\$!')
+    ..writeln('{')
+    ..writeln('  buildSettings = {')
+    ..writeln('    PRODUCT_BUNDLE_IDENTIFIER = com.example.counterApp;')
+    ..writeln('    DEVELOPMENT_TEAM = "$developmentTeam";')
+    ..writeln('  };')
+    ..writeln('}');
+
+  file.writeAsStringSync(buffer.toString());
 }
 
 /// `NSAllowsLocalNetworking` を ATS の `<dict>` の外（root 直下）に
@@ -496,22 +498,24 @@ void _writeInfoPlistWithLocalNetworkingOutsideAts(Directory root) {
   final File file = File(p.join(root.path, 'ios', 'Runner', 'Info.plist'));
   file.parent.createSync(recursive: true);
 
-  file.writeAsStringSync('''
-<?xml version="1.0" encoding="UTF-8"?>
-<plist version="1.0">
-<dict>
-  <key>NSLocalNetworkUsageDescription</key>
-  <string>fluse の LAN 内ホットリロードに使います</string>
-  <key>NSAppTransportSecurity</key>
-  <dict>
-    <key>NSAllowsArbitraryLoads</key>
-    <false/>
-  </dict>
-  <key>NSAllowsLocalNetworking</key>
-  <true/>
-</dict>
-</plist>
-''');
+  final StringBuffer buffer = StringBuffer()
+    ..writeln('<?xml version="1.0" encoding="UTF-8"?>')
+    ..writeln('<plist version="1.0">')
+    ..writeln('<dict>')
+    ..writeln('  <key>NSLocalNetworkUsageDescription</key>')
+    ..writeln('  <string>fluse の LAN 内ホットリロードに使います</string>')
+    ..writeln('  <key>NSAppTransportSecurity</key>')
+    ..writeln('  <dict>')
+    ..writeln('    <key>NSAllowsArbitraryLoads</key>')
+    ..writeln('    <false/>')
+    ..writeln('  </dict>')
+    // **ATS の <dict> の外。** root 直下なので ATS の設定としては効かない。
+    ..writeln('  <key>NSAllowsLocalNetworking</key>')
+    ..writeln('  <true/>')
+    ..writeln('</dict>')
+    ..writeln('</plist>');
+
+  file.writeAsStringSync(buffer.toString());
 }
 
 const FlutterSdk _sdk = FlutterSdk(
