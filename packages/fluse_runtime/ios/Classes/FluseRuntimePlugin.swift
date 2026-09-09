@@ -21,6 +21,19 @@ public final class FluseRuntimePlugin: NSObject, FlutterPlugin {
         let instance = FluseRuntimePlugin()
         instance.channel = channel
         registrar.addMethodCallDelegate(instance, channel: channel)
+
+        // **起動フック（設計 §2.2.5 / Task 9.5・Issue #93）。** iOS に
+        // `ContentProvider` は無いが、この `register(with:)` がエンジン
+        // 初期化時に必ず一度呼ばれるので、`FluseInitProvider.kt` 相当の
+        // 入口として使う。保存済みトークンがあれば再接続、無ければ
+        // ペアリング画面を出す（`FluseStartupCoordinator` 側の判断）。
+        // `canImport(Flutter)` が真の実行環境（CocoaPods 経由の iOS
+        // ビルド）では常に UIKit も使えるはずだが、呼び出し先が触る
+        // `UIKit` / `AVFoundation` を型として持ち出さないよう、ここでも
+        // 同じガードを重ねておく。
+        #if canImport(UIKit)
+        FluseStartupCoordinator.start()
+        #endif
     }
 
     public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
