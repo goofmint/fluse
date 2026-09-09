@@ -27,7 +27,10 @@ final class FluseConnectionTests: XCTestCase {
         let listener: RecordingListener
     }
 
-    private func fixture() -> Fixture {
+    /// `atsAllowed` は既定で `true`（許可されている）にしてある。ATS の
+    /// 事前判定を追加する前と同じ振る舞いを、それに触れない既存のテストで
+    /// 保つため（Task 9.7 / Issue #95 の配線を参照: `FluseATSCheckWiringTests.swift`）。
+    private func fixture(atsAllowed: Bool = true) -> Fixture {
         let store = MemoryConnectionStore()
         let sockets = FakeSocketFactory()
         let scheduler = RecordingScheduler()
@@ -36,7 +39,8 @@ final class FluseConnectionTests: XCTestCase {
             device: device,
             appInfo: appInfo,
             socketFactory: sockets,
-            scheduler: scheduler
+            scheduler: scheduler,
+            atsLocalNetworkingAllowed: { atsAllowed }
         )
         let listener = RecordingListener()
         connection.addListener(listener)
@@ -456,6 +460,13 @@ final class FakeSocket: FluseSocket {
         events.onFailure(FakeSocketFailure())
     }
 
+    /// 特定の `Error` で失敗させる。Task 9.7（Issue #95）で追加。ATS の
+    /// 受動判定（`URLError` -1022）のように、エラーの種類そのものを
+    /// 見る配線を確かめるために必要。
+    func fail(_ error: Error) {
+        events.onFailure(error)
+    }
+
     /// [index] 番目に送った制御メッセージ。
     func sentAs<T: FluseMessage>(_ index: Int) -> T {
         let data = sent[index].data(using: .utf8)!
@@ -491,10 +502,17 @@ final class RecordingListener: FluseConnectionListener {
     private var needsPairingList: [String] = []
     private var messageList: [FluseMessage] = []
     private var disconnectedCount = 0
+    /// Task 9.7（Issue #95）で追加。ATS の事前/受動判定の配線を確かめるため。
+    private var cleartextBlockedList: [(host: String, message: String)] = []
 
     var connected: [String] {
         lock.lock(); defer { lock.unlock() }
         return connectedList
+    }
+
+    var cleartextBlocked: [(host: String, message: String)] {
+        lock.lock(); defer { lock.unlock() }
+        return cleartextBlockedList
     }
 
     var rejected: [String] {
@@ -535,6 +553,10 @@ final class RecordingListener: FluseConnectionListener {
 
     func onMessage(_ message: FluseMessage) {
         lock.lock(); messageList.append(message); lock.unlock()
+    }
+
+    func onCleartextBlocked(host: String, message: String) {
+        lock.lock(); cleartextBlockedList.append((host: host, message: message)); lock.unlock()
     }
 }
 

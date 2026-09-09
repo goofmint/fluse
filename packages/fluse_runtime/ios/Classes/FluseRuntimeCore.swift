@@ -110,4 +110,15 @@ public enum FluseRuntimeCore {
         }
         return String(value.prefix(maskPrefixLength)) + "***"
     }
+
+    /// `deviceToken` のような一般の秘密値をマスクする（設計 §6.1）。
+    ///
+    /// **既存の `mask(_:)` をそのまま公開するだけ。** `maskAuthCode` は
+    /// VM Service の URI のパスセグメント専用の規則を持つため、それ以外の
+    /// 単純な値（Task 9.7 の `deviceToken` 等）をマスクしたい呼び出し側は
+    /// こちらを使う。ロジックは変えず、既存の private ヘルパーを再利用する
+    /// （デグレ防止: `mask(_:)` の中身には触らない）。
+    public static func maskSecret(_ value: String) -> String {
+        mask(value)
+    }
 }
