@@ -38,8 +38,13 @@ final class FluseConnectionServerTests: XCTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
         let server = LocalWebSocketTestServer()
-        try server.start()
+        // **`start()` を呼ぶ前にプロパティへ保持する。** `start()` は
+        // `NWListener` を作った後で `startTimedOut` を投げうる（リスナー自体は
+        // 生きたまま失敗する）。先に代入しておけば、途中で投げても
+        // `tearDown()` の `server.stop()` でそのリスナーを後始末できる
+        // （指摘3対応）。
         self.server = server
+        try server.start()
 
         store = MemoryConnectionStore()
         scheduler = RecordingScheduler()
@@ -57,8 +62,14 @@ final class FluseConnectionServerTests: XCTestCase {
     override func tearDown() {
         // **先に端末側を止める。** 繋いだままサーバを畳むと、次のテストの
         // ポートに影響しうる後始末待ちが残る（Kotlin 版の tearDown と同じ配慮）。
-        connection.stop()
-        server.stop()
+        //
+        // **nil 安全にする。** `setUpWithError` が `server.start()` で
+        // 例外を投げた場合、`connection` はまだ作られておらず nil のまま
+        // （`server` は上で先に代入済み）。ここで force unwrap すると本来の
+        // セットアップエラーがクラッシュに隠れてしまうため、オプショナル
+        // チェーンで安全に呼ぶ（指摘3対応）。
+        connection?.stop()
+        server?.stop()
         super.tearDown()
     }
 

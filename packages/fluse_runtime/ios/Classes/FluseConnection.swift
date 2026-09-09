@@ -143,7 +143,17 @@ public final class FluseConnection {
     private var sessionId: String?
 
     /// `accept` が指定した heartbeat の間隔。診断のために持つ。
-    public private(set) var heartbeatIntervalMs: Int64 = 0
+    ///
+    /// **書き込みは `handleAccept` が `lock` を保持したまま行う。** ソケットの
+    /// コールバックスレッドが書き、呼び出し側スレッドが読むため、`isAuthenticated`
+    /// と同じ形で読み出しも `lock` を取る（取らないとデータ競合になる。指摘2対応）。
+    private var heartbeatIntervalMsValue: Int64 = 0
+
+    public var heartbeatIntervalMs: Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return heartbeatIntervalMsValue
+    }
 
     /**
      * Dart から受け取った VM Service の URI。
@@ -399,7 +409,7 @@ public final class FluseConnection {
     private func handleAccept(_ accept: AcceptMessage) {
         lock.lock()
         sessionId = accept.sessionId
-        heartbeatIntervalMs = accept.heartbeatIntervalMs
+        heartbeatIntervalMsValue = accept.heartbeatIntervalMs
         backoff.reset()
 
         // 発行されたら保存する。次回は QR を出さずに繋げる。

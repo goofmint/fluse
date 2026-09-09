@@ -87,9 +87,11 @@ final class FluseSocketTests: XCTestCase {
     }
 
     func testCloseCalledByUsSuppressesLaterClosedAndFailureCallbacks() {
-        // `close(reason:)` は `detach()` を自分で先に呼んでから閉じにいく
-        // （`FluseSocket.swift` の `Handle.close` 参照）。以後サーバ側で何が
-        // 起きても、`onClosed`/`onFailure` は二度と呼ばれないはず。
+        // `close(reason:)` は `Adapter.detach()` を `task.cancel` より **前に**
+        // 実行してから閉じにいく（`FluseSocket.swift` の `Handle.close`
+        // 参照）。よって、この経路では `onClosed`/`onFailure` は一度も
+        // 呼ばれないはず（指摘4対応：「高々1回」ではなく「ちょうど0回」を
+        // 検証する）。
         let recorder = RecordingSocketEvents()
         let socket = open(recorder)
         guard let peer = server.peer(timeout: timeout) else {
@@ -97,20 +99,25 @@ final class FluseSocketTests: XCTestCase {
         }
         XCTAssertTrue(recorder.waitForOpen(timeout: timeout))
 
+        // 「呼ばれない」ことを確かめるテストなので、届かないことを見届けるだけの
+        // 猶予を実際に待つ。ここは `sleep` ではなく「起こらないはずのことが
+        // 起きていないか」を一定時間観測する待ち（`XCTWaiter` の逆待ち相当）。
+        //
+        // **`close()`/`cancel()` より前に設定する。** 後に置くと、設定する
+        // 前に非同期コールバックが飛んだ場合にそれを取りこぼしてしまう
+        // （指摘4対応）。
+        let unexpected = XCTestExpectation(description: "unexpected closed/failure callback")
+        unexpected.isInverted = true
+        recorder.onExtraTerminalCallback = { unexpected.fulfill() }
+
         socket.close(reason: "テスト")
         // サーバ側からも重ねて閉じにいく。detach 済みなら、これで増えない。
         peer.closeGracefully()
         peer.cancel()
 
-        // 「呼ばれない」ことを確かめるテストなので、届かないことを見届けるだけの
-        // 猶予を実際に待つ。ここは `sleep` ではなく「起こらないはずのことが
-        // 起きていないか」を一定時間観測する待ち（`XCTWaiter` の逆待ち相当）。
-        let unexpected = XCTestExpectation(description: "unexpected closed/failure callback")
-        unexpected.isInverted = true
-        recorder.onExtraTerminalCallback = { unexpected.fulfill() }
         wait(for: [unexpected], timeout: 0.5)
 
-        XCTAssertLessThanOrEqual(recorder.closedCount + recorder.failureCount, 1)
+        XCTAssertEqual(0, recorder.closedCount + recorder.failureCount)
     }
 
     func testServerSideDisconnectFiresExactlyOneTerminalCallback() {
@@ -144,11 +151,36 @@ private final class RecordingSocketEvents: FluseSocketEvents {
     private let lock = NSLock()
     private var openedFlag = false
     private var textList: [String] = []
-    private(set) var closedCount = 0
-    private(set) var failureCount = 0
+    private var closedCountValue = 0
+    private var failureCountValue = 0
+    private var onExtraTerminalCallbackValue: (() -> Void)?
+
+    var closedCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return closedCountValue
+    }
+
+    var failureCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return failureCountValue
+    }
 
     /// 2回目以降の `onClosed`/`onFailure`（本来起きてはいけない）を知らせる。
-    var onExtraTerminalCallback: (() -> Void)?
+    ///
+    /// **カウンタと同じ `NSLock` で保護する。** `onClosed`/`onFailure` は
+    /// ロックを解放した後にこのプロパティを読み出し、テストスレッドは
+    /// 任意のタイミングでこれを書き込む。無防備な `var` のままだと
+    /// データ競合になる（指摘4対応）。
+    var onExtraTerminalCallback: (() -> Void)? {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return onExtraTerminalCallbackValue
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            onExtraTerminalCallbackValue = newValue
+        }
+    }
 
     var texts: [String] {
         lock.lock(); defer { lock.unlock() }
@@ -167,18 +199,24 @@ private final class RecordingSocketEvents: FluseSocketEvents {
 
     func onClosed(_ reason: String) {
         lock.lock()
-        closedCount += 1
-        let isExtra = closedCount + failureCount > 1
+        closedCountValue += 1
+        let isExtra = closedCountValue + failureCountValue > 1
+        // **コールバックはロック内で取得し、ロックの外で実行する。** 握った
+        // まま呼ぶと、コールバック側（`XCTestExpectation.fulfill()` など）が
+        // 何らかの経路でこのロックを取ろうとした場合にデッドロックしうる
+        // （指摘4対応）。
+        let callback = onExtraTerminalCallbackValue
         lock.unlock()
-        if isExtra { onExtraTerminalCallback?() }
+        if isExtra { callback?() }
     }
 
     func onFailure(_ error: Error) {
         lock.lock()
-        failureCount += 1
-        let isExtra = closedCount + failureCount > 1
+        failureCountValue += 1
+        let isExtra = closedCountValue + failureCountValue > 1
+        let callback = onExtraTerminalCallbackValue
         lock.unlock()
-        if isExtra { onExtraTerminalCallback?() }
+        if isExtra { callback?() }
     }
 
     func waitForOpen(timeout: TimeInterval) -> Bool {
@@ -198,7 +236,7 @@ private final class RecordingSocketEvents: FluseSocketEvents {
     func waitForTerminal(timeout: TimeInterval) -> Bool {
         pollUntil(timeout: timeout) {
             self.lock.lock(); defer { self.lock.unlock() }
-            return self.closedCount + self.failureCount >= 1
+            return self.closedCountValue + self.failureCountValue >= 1
         }
     }
 

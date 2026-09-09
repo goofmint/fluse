@@ -90,7 +90,7 @@ final class URLSessionFluseSocketFactory: FluseSocketFactory {
         let session = URLSession(configuration: configuration, delegate: adapter, delegateQueue: nil)
         let task = session.webSocketTask(with: requestUrl)
         let handle = Handle(session: session, task: task, adapter: adapter)
-        adapter.startReceiving(from: task)
+        adapter.startReceiving(from: task, session: session)
         task.resume()
         return handle
     }
@@ -148,7 +148,7 @@ final class URLSessionFluseSocketFactory: FluseSocketFactory {
          * 状態を保つ（OkHttp は内部でメッセージを直列にコールバックするため
          * Kotlin 側にこの気配りは無い）。
          */
-        func startReceiving(from task: URLSessionWebSocketTask) {
+        func startReceiving(from task: URLSessionWebSocketTask, session: URLSession) {
             if detached { return }
             task.receive { [weak self] result in
                 guard let self = self else { return }
@@ -164,8 +164,16 @@ final class URLSessionFluseSocketFactory: FluseSocketFactory {
                         break
                     }
                     // 続けて次を待つ。ここで再帰しないと1通しか受け取れない。
-                    self.startReceiving(from: task)
+                    self.startReceiving(from: task, session: session)
                 case let .failure(error):
+                    // **終端経路。先頭の defer で必ず無効化する。** `guard` より
+                    // 前に置くのは、detach 済み（他経路が先に終端を伝えた）の
+                    // 場合でも無効化だけは必ず行うため。呼ばないと `URLSession`
+                    // が `Adapter`（延いては `FluseSocketEvents`）を無効化される
+                    // まで強参照し続け、再接続のたびにセッションが積み上がる
+                    // （指摘1対応）。`Handle.close(reason:)` からも呼ばれるが、
+                    // `finishTasksAndInvalidate()` は複数回呼んでも安全（冪等）。
+                    defer { session.finishTasksAndInvalidate() }
                     // detach 済みなら握り潰す。正常に閉じた直後にも `receive` が
                     // 失敗として返ってくることがある。
                     guard self.detach() else { return }
@@ -189,6 +197,15 @@ final class URLSessionFluseSocketFactory: FluseSocketFactory {
             didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
             reason: Data?
         ) {
+            // **終端コールバックの先頭で必ず無効化する。** `guard` より前に
+            // 置くのは、既に detach 済み（他経路が先に終端を伝えた重複通知）
+            // でも無効化だけは必ず行うため。`URLSession` は invalidate される
+            // まで delegate（この `Adapter`、延いては `FluseSocketEvents`）を
+            // 強参照し続けるので、ここで呼ばないと再接続のたびにセッションが
+            // 積み上がってしまう（指摘1対応）。`Handle.close(reason:)` からも
+            // 呼ばれうるが、`finishTasksAndInvalidate()` は複数回呼んでも
+            // 安全（冪等）。
+            defer { session.finishTasksAndInvalidate() }
             guard detach() else { return }
             // `reason` は表示とログのためだけに使う値。`String(data:encoding:)`
             // は不正なバイト列で nil を返しうる（Kotlin の OkHttp は既に
@@ -201,6 +218,12 @@ final class URLSessionFluseSocketFactory: FluseSocketFactory {
         }
 
         func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            // **正常終了でも無効化する。** `didCloseWith` で既に無効化されて
+            // いることが多いが（冪等なので問題ない）、`didCloseWith` が来ない
+            // 経路（例えばハンドシェイク自体の失敗）でここだけが呼ばれる
+            // こともあるため、`error == nil` の早期 return より前に置く
+            // （指摘1対応）。
+            defer { session.finishTasksAndInvalidate() }
             guard let error = error else {
                 // 正常終了。`didCloseWith` が既に `onClosed` を伝えているはず
                 // なので、ここでは何もしない（detach 済みなら二重配送されない）。
@@ -274,6 +297,11 @@ final class URLSessionFluseSocketFactory: FluseSocketFactory {
             // 1000 は正常終了。異常は WebSocket の close フレームに委ねる
             // （設計 §2.2.1 の CloseMessage の注記）。
             task.cancel(with: .normalClosure, reason: reason.data(using: .utf8))
+            // ここで無効化しても、`task.cancel` を受けて `Adapter` 側の終端
+            // コールバックが後から届き、そちらの defer でもう一度
+            // `finishTasksAndInvalidate()` が呼ばれることがある。`URLSession`
+            // の invalidate は複数回呼んでも安全（冪等）なので、二重に呼ぶこと
+            // 自体は問題にならない（指摘1対応）。
             session.finishTasksAndInvalidate()
         }
     }
