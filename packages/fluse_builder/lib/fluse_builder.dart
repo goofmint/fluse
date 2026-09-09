@@ -5,6 +5,8 @@
 library;
 
 export 'src/android_device.dart';
+export 'src/android_device_installer.dart';
+export 'src/android_preview_app_builder.dart';
 export 'src/apk_server.dart';
 export 'src/builder_contracts.dart';
 export 'src/device_install_exception.dart';

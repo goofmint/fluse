@@ -58,8 +58,9 @@ void main() {
 
   Future<int> runDevices() {
     final DevicesCommand command = DevicesCommand(
-      installerFactory: (FluseContext c) =>
-          DeviceInstaller(processManager: steps, onMessage: (String _) {}),
+      installerFactory: (FluseContext c) => AndroidDeviceInstaller(
+        DeviceInstaller(processManager: steps, onMessage: (String _) {}),
+      ),
       onOutput: output.add,
     );
     return command.run(command.argParser.parse(const <String>[]), context());
