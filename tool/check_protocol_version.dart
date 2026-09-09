@@ -1,9 +1,10 @@
-// Dart / Kotlin / ゴールデンの `protocolVersion` が一致していることを検査する。
+// Dart / Kotlin / Swift / ゴールデンの `protocolVersion` が一致していることを
+// 検査する。
 //
-// 3 つは別々のファイルに書かれている。片方だけ上げると、ワイヤ表現が
+// 4 つは別々のファイルに書かれている。どれか1つだけ上げると、ワイヤ表現が
 // 食い違ったまま「なぜか特定の機能だけ動かない」不具合になる（設計 §9.1）。
-// テストでも突合しているが、テストは実行環境（JDK / Dart SDK）が揃って
-// はじめて動く。この検査は正規表現だけで完結するので、CI の最初に置ける。
+// テストでも突合しているが、テストは実行環境（JDK / Dart SDK / Swift Toolchain）
+// が揃ってはじめて動く。この検査は正規表現だけで完結するので、CI の最初に置ける。
 //
 // 使い方: dart run tool/check_protocol_version.dart
 // 一致すれば 0、食い違えば 1 で終了する。
@@ -17,6 +18,9 @@ const _dartSource = 'packages/fluse_protocol/lib/src/protocol_version.dart';
 // 配布物が成立しないため。fluse_protocol_kt は srcDir でここを借りている。
 const _kotlinSource =
     'packages/fluse_runtime/android/src/wire/kotlin/dev/fluse/protocol/ProtocolVersion.kt';
+// Swift のワイヤ実装は最初からプラグイン側（fluse_runtime/ios）に置く
+// （Task 9.1）。Kotlin と違い、後から移した経緯は無い。
+const _swiftSource = 'packages/fluse_runtime/ios/Classes/ProtocolVersion.swift';
 const _goldenSource = 'packages/fluse_protocol/test/fixtures/wire_golden.json';
 
 /// `const int fluseProtocolVersion = 1;`
@@ -29,10 +33,16 @@ final _kotlinPattern = RegExp(
   r'const\s+val\s+FLUSE_PROTOCOL_VERSION\s*(?::\s*Int\s*)?=\s*(\d+)',
 );
 
+/// `public let fluseProtocolVersion: Int = 1`
+final _swiftPattern = RegExp(
+  r'let\s+fluseProtocolVersion\s*(?::\s*Int\s*)?=\s*(\d+)',
+);
+
 void main(List<String> args) {
   final versions = <String, int>{
     _dartSource: _extractWithPattern(_dartSource, _dartPattern),
     _kotlinSource: _extractWithPattern(_kotlinSource, _kotlinPattern),
+    _swiftSource: _extractWithPattern(_swiftSource, _swiftPattern),
     _goldenSource: _extractFromGolden(_goldenSource),
   };
 
@@ -41,13 +51,13 @@ void main(List<String> args) {
     stderr.writeln('protocolVersion が食い違っています:');
     versions.forEach((path, version) => stderr.writeln('  $version  $path'));
     stderr.writeln(
-      '\n変更したら 3 つすべてを同じ値に揃えること。'
+      '\n変更したら 4 つすべてを同じ値に揃えること。'
       'メッセージの形を変えたのであれば全部を上げる。',
     );
     exit(1);
   }
 
-  stdout.writeln('protocolVersion = ${distinct.single}（3 箇所すべて一致）');
+  stdout.writeln('protocolVersion = ${distinct.single}（4 箇所すべて一致）');
 }
 
 /// ソースから定数値を 1 つだけ取り出す。

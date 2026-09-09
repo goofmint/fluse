@@ -9,6 +9,7 @@ topics:
   - flutter
   - hot-reload
   - android
+  - ios
 
 environment:
   sdk: ^3.9.0
@@ -36,4 +37,6 @@ flutter:
       android:
         # Kotlin 側の package。fluse_protocol_kt と同じ名前に揃えてある。
         package: dev.fluse.runtime
+        pluginClass: FluseRuntimePlugin
+      ios:
         pluginClass: FluseRuntimePlugin

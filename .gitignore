@@ -26,6 +26,10 @@ pubspec_overrides.yaml
 **/android/local.properties
 **/android/.cxx/
 
+# SwiftPM（`swift build` / `swift test`）のビルド生成物。
+**/ios/.build/
+**/ios/.swiftpm/
+
 # 署名鍵。混ざると取り返しがつかない（設計 §6.2）。
 *.jks
 *.keystore
