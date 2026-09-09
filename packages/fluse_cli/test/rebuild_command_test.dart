@@ -43,10 +43,9 @@ void main() {
   Future<int> runRebuild({List<String> arguments = const <String>[]}) {
     final RebuildCommand command = RebuildCommand(
       keystoreManager: KeystoreManager(processManager: steps, isWindows: false),
-      builderFactory: (FluseContext c) =>
-          AndroidPreviewAppBuilder(
-            PreviewAppBuilder(sdk: c.sdk, processManager: steps),
-          ),
+      builderFactory: (FluseContext c) => AndroidPreviewAppBuilder(
+        PreviewAppBuilder(sdk: c.sdk, processManager: steps),
+      ),
       installerFactory: (FluseContext c) => AndroidDeviceInstaller(
         DeviceInstaller(
           processManager: steps,
@@ -231,10 +230,9 @@ Future<int> _runInit(Directory root, Steps steps) {
     keystoreManager: KeystoreManager(processManager: steps, isWindows: false),
     pubGetRunnerFactory: (FluseContext c) =>
         PubGetRunner(sdk: c.sdk, processManager: steps),
-    builderFactory: (FluseContext c) =>
-        AndroidPreviewAppBuilder(
-          PreviewAppBuilder(sdk: c.sdk, processManager: steps),
-        ),
+    builderFactory: (FluseContext c) => AndroidPreviewAppBuilder(
+      PreviewAppBuilder(sdk: c.sdk, processManager: steps),
+    ),
     installerFactory: (FluseContext c) => AndroidDeviceInstaller(
       DeviceInstaller(
         processManager: steps,
