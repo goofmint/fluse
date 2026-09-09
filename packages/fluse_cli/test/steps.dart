@@ -58,6 +58,12 @@ final class Steps implements ProcessManager {
   /// `adb` が PATH にあるか。無い機を演じる時に false にする。
   bool adbAvailable = true;
 
+  /// `xcode-select -p` が返す先。既定は Xcode 本体を指している状態。
+  String xcodeSelectPath = '/Applications/Xcode.app/Contents/Developer';
+
+  /// `xcrun --find devicectl` が見つかるか。
+  bool devicectlAvailable = true;
+
   bool ran(String step) => order.contains(step);
 
   /// `flutter build --verbose` が出す起動コマンドを模した1行。
@@ -141,6 +147,16 @@ final class Steps implements ProcessManager {
     Encoding? stderrEncoding = systemEncoding,
   }) {
     final List<String> args = command.map((Object e) => '$e').toList();
+    if (args.first == 'xcode-select') {
+      order.add('xcode-select');
+      return ProcessResult(1, 0, xcodeSelectPath, '');
+    }
+    if (args.first == 'xcrun' && args.contains('devicectl')) {
+      order.add('xcrun devicectl');
+      return devicectlAvailable
+          ? ProcessResult(1, 0, '/Applications/Xcode.app/.../devicectl', '')
+          : ProcessResult(1, 1, '', 'devicectl not found');
+    }
     if (args.first == 'keytool') {
       order.add('keytool');
       final File file = File(args[args.indexOf('-keystore') + 1]);

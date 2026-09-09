@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'devices_command.dart';
 import 'fluse_command.dart';
 import 'fluse_context.dart';
+import 'fluse_target_platform.dart';
 
 /// 検査1件の結果。
 final class DoctorCheck {
@@ -77,11 +78,26 @@ final class DoctorCommand implements FluseCommand {
   Future<int> run(ArgResults args, FluseContext context) async {
     final List<DoctorCheck> checks = <DoctorCheck>[];
     try {
-      checks
-        ..add(_checkSdk(context))
-        ..add(_checkExecutable(context, 'adb', 'Android SDK の platform-tools'))
-        ..add(_checkExecutable(context, 'keytool', 'JDK'))
-        ..add(await _checkPort(context));
+      checks.add(_checkSdk(context));
+      // **プラットフォームで分岐する。** iOS を選んでいる利用者に
+      // `adb` が無いと言っても意味が無い（Issue #104）。
+      switch (context.config.platform) {
+        case FluseTargetPlatform.android:
+          checks
+            ..add(
+              _checkExecutable(context, 'adb', 'Android SDK の platform-tools'),
+            )
+            ..add(_checkExecutable(context, 'keytool', 'JDK'));
+        case FluseTargetPlatform.ios:
+          checks
+            ..add(await _checkXcode(context))
+            ..add(await _checkDevicectl(context))
+            ..add(_checkIosDir(context))
+            ..add(_checkDevelopmentTeam(context))
+            ..addAll(_checkInfoPlist(context))
+            ..add(_checkExecutable(context, 'pod', 'CocoaPods'));
+      }
+      checks.add(await _checkPort(context));
       checks.addAll(await _checkPreviewDir(context));
     } on Object catch (error) {
       // 検査そのものが落ちた。**「異常なし」で終わらせない。**
@@ -132,6 +148,269 @@ final class DoctorCommand implements FluseCommand {
             executable,
             detail: '見つかりません。$where を入れて PATH を通してください',
           );
+  }
+
+  // -------------------------------------------------------------------- iOS
+
+  /// `xcode-select -p` が指す先が Command Line Tools のままでないか。
+  ///
+  /// **Xcode.app が入っていても、これが切り替わっていない状態は普通に
+  /// 起きる。** その時は `xcodebuild` や `xcrun` が Xcode 本体の道具を
+  /// 見つけられず、実機ビルドが理由不明のまま失敗する。
+  Future<DoctorCheck> _checkXcode(FluseContext context) async {
+    const String label = 'Xcode';
+    final ProcessResult result;
+    try {
+      result = await context.processManager.run(<String>['xcode-select', '-p']);
+    } on ProcessException catch (error) {
+      return DoctorCheck.failed(label, detail: '確かめられません: ${error.message}');
+    }
+    if (result.exitCode != 0) {
+      return DoctorCheck.failed(
+        label,
+        detail:
+            '見つかりません。App Store から Xcode を入れてください: '
+            '${_trimmed(result.stderr) ?? result.stderr}',
+      );
+    }
+    final String path = '${result.stdout}'.trim();
+    if (path.contains('CommandLineTools')) {
+      return DoctorCheck.failed(
+        label,
+        detail:
+            'コマンドラインツール（$path）を指しています。Xcode 本体に切り替えてください: '
+            '`sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer`',
+      );
+    }
+    return DoctorCheck.ok(label, detail: path);
+  }
+
+  /// `xcrun devicectl` が使えるか。実機の一覧・インストールに使う（Issue #99）。
+  Future<DoctorCheck> _checkDevicectl(FluseContext context) async {
+    const String label = 'xcrun devicectl';
+    final ProcessResult result;
+    try {
+      result = await context.processManager.run(<String>[
+        'xcrun',
+        '--find',
+        'devicectl',
+      ]);
+    } on ProcessException catch (error) {
+      return DoctorCheck.failed(label, detail: '確かめられません: ${error.message}');
+    }
+    if (result.exitCode != 0) {
+      return DoctorCheck.failed(label, detail: '見つかりません。Xcode 15 以降が必要です');
+    }
+    return DoctorCheck.ok(label);
+  }
+
+  /// `ios/` があるか。`flutter create` を Android だけで済ませたまま
+  /// `--platform ios` を選んでいる場合に起きる。
+  DoctorCheck _checkIosDir(FluseContext context) {
+    const String label = 'ios/';
+    final Directory dir = Directory(p.join(context.projectRoot.path, 'ios'));
+    if (!dir.existsSync()) {
+      return const DoctorCheck.failed(
+        label,
+        detail: 'ありません。`flutter create --platforms=ios .` を実行してください',
+      );
+    }
+    return const DoctorCheck.ok(label);
+  }
+
+  /// 署名チームを解決できるか（Issue #104）。
+  ///
+  /// 実機ビルドは `DEVELOPMENT_TEAM` が無いと Xcode の automatic signing に
+  /// 入れず、`No signing certificate` で落ちる。**シミュレータだけなら
+  /// 要らない**ので、失敗の文面でその区別を伝える。
+  ///
+  /// **`xcodebuild -showBuildSettings` は動かさない。** Gradle を動かさない
+  /// のと同じ方針で、`project.pbxproj` をテキストとして読む。数秒かかる
+  /// コマンドを doctor の中で待たせない。
+  DoctorCheck _checkDevelopmentTeam(FluseContext context) {
+    const String label = 'DEVELOPMENT_TEAM';
+    final File project = File(
+      p.join(
+        context.projectRoot.path,
+        'ios',
+        'Runner.xcodeproj',
+        'project.pbxproj',
+      ),
+    );
+
+    if (!project.existsSync()) {
+      return const DoctorCheck.failed(
+        label,
+        detail:
+            'ios/Runner.xcodeproj/project.pbxproj がありません。'
+            '`flutter create --platforms=ios .` を実行してください',
+      );
+    }
+
+    final String contents;
+    try {
+      contents = project.readAsStringSync();
+    } on Object catch (error) {
+      return DoctorCheck.failed(
+        label,
+        detail: 'ios/Runner.xcodeproj/project.pbxproj を読めません: $error',
+      );
+    }
+
+    final String? team = _developmentTeam(contents);
+    if (team == null) {
+      return const DoctorCheck.failed(
+        label,
+        detail:
+            '解決できません。実機ビルドには署名チームが要ります。'
+            'Xcode で Runner > Signing & Capabilities > Team を選んでください'
+            '（シミュレータだけなら不要です）',
+      );
+    }
+    return DoctorCheck.ok(label, detail: team);
+  }
+
+  /// `project.pbxproj` から `DEVELOPMENT_TEAM` の値を拾う。
+  ///
+  /// 構成ごとに複数書かれることがある。**空文字は「未設定」として
+  /// 扱う。** Xcode は Team を外したときに `DEVELOPMENT_TEAM = "";` を
+  /// 残すため、キーがあることだけでは解決できたことにならない。
+  static String? _developmentTeam(String contents) {
+    final RegExp pattern = RegExp(r'DEVELOPMENT_TEAM\s*=\s*"?([^";\n]*)"?\s*;');
+    for (final RegExpMatch match in pattern.allMatches(contents)) {
+      final String value = (match.group(1) ?? '').trim();
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  static const String _localNetworkUsageKey = 'NSLocalNetworkUsageDescription';
+  static const String _localNetworkingKey = 'NSAllowsLocalNetworking';
+  static const String _appTransportSecurityKey = 'NSAppTransportSecurity';
+
+  /// `ios/Runner/Info.plist` の2キーを見る。Android の `INTERNET` 権限と
+  /// `usesCleartextTraffic`（設計 §10-4）の iOS 版に当たる。
+  ///
+  /// **`plutil` は使わない。** Gradle や xcodebuild を動かさないのと
+  /// 同じ方針で、テキストとして読む。
+  List<DoctorCheck> _checkInfoPlist(FluseContext context) {
+    const String usageLabel = 'Info.plist: $_localNetworkUsageKey';
+    const String allowsLabel = 'Info.plist: $_localNetworkingKey';
+    final File plist = File(
+      p.join(context.projectRoot.path, 'ios', 'Runner', 'Info.plist'),
+    );
+
+    if (!plist.existsSync()) {
+      const String detail =
+          'ios/Runner/Info.plist がありません。これが無いと LAN の WebSocket に繋がりません';
+      return const <DoctorCheck>[
+        DoctorCheck.failed(usageLabel, detail: detail),
+        DoctorCheck.failed(allowsLabel, detail: detail),
+      ];
+    }
+
+    final String contents;
+    try {
+      contents = plist.readAsStringSync();
+    } on Object catch (error) {
+      // **読めないことを他の検査の巻き添えにしない。** ここで投げると
+      // run() の外側の catch に届き、CocoaPods・ポート・.flutter_preview の
+      // 検査ごと打ち切られる。この2件の失敗として返す。
+      final String detail = 'ios/Runner/Info.plist を読めません: $error';
+      return <DoctorCheck>[
+        DoctorCheck.failed(usageLabel, detail: detail),
+        DoctorCheck.failed(allowsLabel, detail: detail),
+      ];
+    }
+
+    final DoctorCheck usageCheck =
+        contents.contains('<key>$_localNetworkUsageKey</key>')
+        ? const DoctorCheck.ok(usageLabel)
+        : const DoctorCheck.failed(
+            usageLabel,
+            detail: 'ありません。これが無いと LAN の WebSocket に繋がりません',
+          );
+
+    final DoctorCheck allowsCheck = _hasLocalNetworkingException(contents)
+        ? const DoctorCheck.ok(allowsLabel)
+        : const DoctorCheck.failed(
+            allowsLabel,
+            detail:
+                '$_appTransportSecurityKey 配下にありません。'
+                'これが無いと LAN の WebSocket に繋がりません',
+          );
+
+    return <DoctorCheck>[usageCheck, allowsCheck];
+  }
+
+  /// `NSAppTransportSecurity` 配下に `NSAllowsLocalNetworking` が
+  /// `true` で入っているかを、素朴な文字列探索で見る。
+  ///
+  /// **探索範囲は ATS の `<dict>` の中だけ。** root 直下に置かれた
+  /// `NSAllowsLocalNetworking` は ATS の設定として効かないため、
+  /// それを成功と判定してはいけない。
+  static bool _hasLocalNetworkingException(String contents) {
+    final String? body = _appTransportSecurityBody(contents);
+    if (body == null) {
+      return false;
+    }
+    const String key = '<key>$_localNetworkingKey</key>';
+    final int keyIndex = body.indexOf(key);
+    if (keyIndex == -1) {
+      return false;
+    }
+    final String after = body.substring(keyIndex + key.length).trimLeft();
+    return after.startsWith('<true/>') || after.startsWith('<true></true>');
+  }
+
+  /// `NSAppTransportSecurity` に対応する `<dict>` の中身を切り出す。
+  ///
+  /// 入れ子の `<dict>` を数えて対応する `</dict>` を見つける。キーが
+  /// 無い・値が辞書でない・閉じていない、のいずれでも null を返す。
+  static String? _appTransportSecurityBody(String contents) {
+    const String open = '<dict>';
+    const String close = '</dict>';
+    final int atsIndex = contents.indexOf(
+      '<key>$_appTransportSecurityKey</key>',
+    );
+    if (atsIndex == -1) {
+      return null;
+    }
+
+    final String rest = contents
+        .substring(atsIndex + '<key>$_appTransportSecurityKey</key>'.length)
+        .trimLeft();
+    // 空の辞書。中身が無いので探すまでもない。
+    if (rest.startsWith('<dict/>')) {
+      return '';
+    }
+    if (!rest.startsWith(open)) {
+      // 値が辞書でない。ATS の設定として壊れている。
+      return null;
+    }
+
+    int depth = 1;
+    int cursor = open.length;
+    while (true) {
+      final int nextOpen = rest.indexOf(open, cursor);
+      final int nextClose = rest.indexOf(close, cursor);
+      if (nextClose == -1) {
+        // 閉じていない。
+        return null;
+      }
+      if (nextOpen != -1 && nextOpen < nextClose) {
+        depth++;
+        cursor = nextOpen + open.length;
+        continue;
+      }
+      depth--;
+      if (depth == 0) {
+        return rest.substring(open.length, nextClose);
+      }
+      cursor = nextClose + close.length;
+    }
   }
 
   // ---------------------------------------------------------------- ポート
@@ -353,4 +632,13 @@ final class DoctorCommand implements FluseCommand {
 
   /// 複数行の詳細を桁下げして読めるようにする。
   static String _indent(String text) => text.replaceAll('\n', '\n    ');
+
+  /// `stderr` が空でない `String` ならそのまま、それ以外は null。
+  static String? _trimmed(Object? stderr) {
+    if (stderr is! String) {
+      return null;
+    }
+    final String trimmed = stderr.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
 }
