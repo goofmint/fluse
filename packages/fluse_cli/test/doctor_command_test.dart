@@ -173,17 +173,24 @@ void main() {
       expect(text(), contains('keystore.json'));
     });
 
-    test('keystore.json を誰でも読めれば指摘する', () async {
-      final File file = File(
-        p.join(temp.path, '.flutter_preview', 'keystore', 'keystore.json'),
-      );
-      expect(Process.runSync('chmod', <String>['644', file.path]).exitCode, 0);
+    test(
+      'keystore.json を誰でも読めれば指摘する',
+      () async {
+        final File file = File(
+          p.join(temp.path, '.flutter_preview', 'keystore', 'keystore.json'),
+        );
+        expect(
+          Process.runSync('chmod', <String>['644', file.path]).exitCode,
+          0,
+        );
 
-      expect(await runDoctor(), 1);
+        expect(await runDoctor(), 1);
 
-      expect(text(), contains('644'));
-      // Windows に POSIX のパーミッションは無く、`chmod` も無い。
-    }, skip: Platform.isWindows ? 'POSIX のパーミッションが無い' : null);
+        expect(text(), contains('644'));
+        // Windows に POSIX のパーミッションは無く、`chmod` も無い。
+      },
+      skip: Platform.isWindows ? 'POSIX のパーミッションが無い' : null,
+    );
 
     test('実際に塞がっているポートを見つける', () async {
       // **注入した bind だけで済ませない。** 既定の実装が本当に
@@ -344,6 +351,42 @@ void main() {
       expect(text(), contains('✗ Info.plist: NSLocalNetworkUsageDescription'));
       expect(text(), contains('✗ Info.plist: NSAllowsLocalNetworking'));
     });
+
+    test('ATS の外に NSAllowsLocalNetworking があっても成功にしない', () async {
+      _writeInfoPlistWithLocalNetworkingOutsideAts(temp);
+
+      expect(
+        await runDoctor(on: context(platform: FluseTargetPlatform.ios)),
+        1,
+      );
+
+      // root 直下に置いても ATS の設定としては効かない。
+      expect(text(), contains('✗ Info.plist: NSAllowsLocalNetworking'));
+      expect(text(), contains('NSAppTransportSecurity 配下にありません'));
+      expect(text(), contains('✓ Info.plist: NSLocalNetworkUsageDescription'));
+    });
+
+    test('Info.plist が読めなくても後続の検査は続ける', () async {
+      // 不正な UTF-8 を置く。存在はするが readAsStringSync が投げる。
+      final File file = File(p.join(temp.path, 'ios', 'Runner', 'Info.plist'));
+      file.parent.createSync(recursive: true);
+      file.writeAsBytesSync(<int>[0xc3, 0x28, 0xa0, 0xa1]);
+
+      expect(
+        await runDoctor(on: context(platform: FluseTargetPlatform.ios)),
+        1,
+      );
+
+      expect(text(), contains('✗ Info.plist: NSLocalNetworkUsageDescription'));
+      expect(text(), contains('✗ Info.plist: NSAllowsLocalNetworking'));
+      expect(text(), contains('読めません'));
+      // **打ち切られていないこと。** 後ろに並ぶ検査が出ている。
+      expect(text(), contains('✓ pod'));
+      expect(text(), contains('✓ ポート'));
+      expect(text(), contains('✓ devices.json'));
+      // 問題は Info.plist の2件だけ。
+      expect(text(), contains('2 件の問題があります。'));
+    });
   });
 }
 
@@ -383,6 +426,30 @@ void _writeInfoPlist(
     ..writeln('</plist>');
 
   file.writeAsStringSync(buffer.toString());
+}
+
+/// `NSAllowsLocalNetworking` を ATS の `<dict>` の外（root 直下）に
+/// 置いた plist を書く。ATS の設定としては効かない配置。
+void _writeInfoPlistWithLocalNetworkingOutsideAts(Directory root) {
+  final File file = File(p.join(root.path, 'ios', 'Runner', 'Info.plist'));
+  file.parent.createSync(recursive: true);
+
+  file.writeAsStringSync('''
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>fluse の LAN 内ホットリロードに使います</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <false/>
+  </dict>
+  <key>NSAllowsLocalNetworking</key>
+  <true/>
+</dict>
+</plist>
+''');
 }
 
 const FlutterSdk _sdk = FlutterSdk(

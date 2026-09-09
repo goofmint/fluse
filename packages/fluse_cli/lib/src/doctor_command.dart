@@ -242,7 +242,19 @@ final class DoctorCommand implements FluseCommand {
       ];
     }
 
-    final String contents = plist.readAsStringSync();
+    final String contents;
+    try {
+      contents = plist.readAsStringSync();
+    } on Object catch (error) {
+      // **読めないことを他の検査の巻き添えにしない。** ここで投げると
+      // run() の外側の catch に届き、CocoaPods・ポート・.flutter_preview の
+      // 検査ごと打ち切られる。この2件の失敗として返す。
+      final String detail = 'ios/Runner/Info.plist を読めません: $error';
+      return <DoctorCheck>[
+        DoctorCheck.failed(usageLabel, detail: detail),
+        DoctorCheck.failed(allowsLabel, detail: detail),
+      ];
+    }
 
     final DoctorCheck usageCheck =
         contents.contains('<key>$_localNetworkUsageKey</key>')
@@ -266,24 +278,70 @@ final class DoctorCommand implements FluseCommand {
 
   /// `NSAppTransportSecurity` 配下に `NSAllowsLocalNetworking` が
   /// `true` で入っているかを、素朴な文字列探索で見る。
+  ///
+  /// **探索範囲は ATS の `<dict>` の中だけ。** root 直下に置かれた
+  /// `NSAllowsLocalNetworking` は ATS の設定として効かないため、
+  /// それを成功と判定してはいけない。
   static bool _hasLocalNetworkingException(String contents) {
+    final String? body = _appTransportSecurityBody(contents);
+    if (body == null) {
+      return false;
+    }
+    const String key = '<key>$_localNetworkingKey</key>';
+    final int keyIndex = body.indexOf(key);
+    if (keyIndex == -1) {
+      return false;
+    }
+    final String after = body.substring(keyIndex + key.length).trimLeft();
+    return after.startsWith('<true/>') || after.startsWith('<true></true>');
+  }
+
+  /// `NSAppTransportSecurity` に対応する `<dict>` の中身を切り出す。
+  ///
+  /// 入れ子の `<dict>` を数えて対応する `</dict>` を見つける。キーが
+  /// 無い・値が辞書でない・閉じていない、のいずれでも null を返す。
+  static String? _appTransportSecurityBody(String contents) {
+    const String open = '<dict>';
+    const String close = '</dict>';
     final int atsIndex = contents.indexOf(
       '<key>$_appTransportSecurityKey</key>',
     );
     if (atsIndex == -1) {
-      return false;
+      return null;
     }
-    final int keyIndex = contents.indexOf(
-      '<key>$_localNetworkingKey</key>',
-      atsIndex,
-    );
-    if (keyIndex == -1) {
-      return false;
-    }
-    final String after = contents
-        .substring(keyIndex + '<key>$_localNetworkingKey</key>'.length)
+
+    final String rest = contents
+        .substring(atsIndex + '<key>$_appTransportSecurityKey</key>'.length)
         .trimLeft();
-    return after.startsWith('<true/>') || after.startsWith('<true></true>');
+    // 空の辞書。中身が無いので探すまでもない。
+    if (rest.startsWith('<dict/>')) {
+      return '';
+    }
+    if (!rest.startsWith(open)) {
+      // 値が辞書でない。ATS の設定として壊れている。
+      return null;
+    }
+
+    int depth = 1;
+    int cursor = open.length;
+    while (true) {
+      final int nextOpen = rest.indexOf(open, cursor);
+      final int nextClose = rest.indexOf(close, cursor);
+      if (nextClose == -1) {
+        // 閉じていない。
+        return null;
+      }
+      if (nextOpen != -1 && nextOpen < nextClose) {
+        depth++;
+        cursor = nextOpen + open.length;
+        continue;
+      }
+      depth--;
+      if (depth == 0) {
+        return rest.substring(open.length, nextClose);
+      }
+      cursor = nextClose + close.length;
+    }
   }
 
   // ---------------------------------------------------------------- ポート
