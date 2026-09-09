@@ -68,6 +68,57 @@ Task 4.1 以降の Preview App ビルドの確認素材として都合がよい�
 - ドキュメントディレクトリのパスが表示される
   （`path_provider の呼び出しに失敗:` と出た場合はプラグイン解決に失敗している）
 
+## iOS
+
+`ios/Runner/Info.plist` に `NSLocalNetworkUsageDescription` と
+`NSAppTransportSecurity` → `NSAllowsLocalNetworking` を追加してある
+（それぞれ Android の `INTERNET` 権限 / `usesCleartextTraffic` に相当。
+設計 §10-4 の iOS 版）。許可範囲を LAN に限定するため
+`NSAllowsArbitraryLoads` は使わず、QR が IP とポートを直接運ぶため
+`NSBonjourServices` も追加していない。
+
+### ビルド
+
+```console
+$ flutter build ios --debug --no-codesign
+```
+
+`--no-codesign` はコード署名なしでビルドするためのフラグ。実機に配布するには
+別途 Apple Developer のプロビジョニングが必要だが、シミュレータでの動作確認
+だけならこれで足りる。
+
+### シミュレータでの実行
+
+一覧に出る UUID を控えて渡す。**`<simulator id>` のような山括弧のまま
+実行しないこと。** シェルが `<` を入力リダイレクトと解釈して、ID が
+`flutter run` に渡らない。
+
+```console
+$ xcrun simctl list devices available | grep iPhone
+    iPhone 16 (A1B2C3D4-1234-5678-9ABC-DEF012345678) (Shutdown)
+$ open -a Simulator
+$ SIMULATOR_UUID=A1B2C3D4-1234-5678-9ABC-DEF012345678
+$ flutter run -d "$SIMULATOR_UUID"
+```
+
+### `path_provider` の解決経路について
+
+`path_provider_foundation` は `dartPluginClass`（`objective_c` パッケージ経由の
+Dart FFI）で実装されており、Android の `path_provider_android` と同じく
+ネイティブの `PathProviderPlugin` クラスを持たない。したがって
+`ios/Runner/GeneratedPluginRegistrant.m` の `registerWithRegistry:` は空の
+ままになるが、これは異常ではない。ビルド成果物の `Runner.app/Frameworks/`
+に `objective_c.framework` が同梱されていることで解決経路を確認できる。
+
+### 動作確認
+
+シミュレータで起動して以下を確認する。
+
+- `assets/images/fluse_logo.png` の画像が描画される
+- font `Inconsolata` が描画される（`0` と `O`、`1` と `l` と `I` が区別できる）
+- `path_provider` の `getApplicationDocumentsDirectory()` が解決し、
+  `MissingPluginException` にならない
+
 ## フォントのライセンス
 
 `assets/fonts/Inconsolata-Regular.ttf` は SIL Open Font License 1.1。

@@ -57,3 +57,7 @@ coverage/
 
 # Xcode のユーザー個別設定（スキーム順やブレークポイント）。
 **/xcuserdata/
+
+# Xcode の中間生成物。既定では ~/Library 配下だが、
+# 出力先をプロジェクト内に変えている環境がある。
+DerivedData/
