@@ -60,10 +60,8 @@ final class RebuildCommand implements FluseCommand {
   /// **契約（`PreviewAppBuilderContract` / `DeviceInstallerContract`）越し
   /// に持つ。** Android の具象を直接持つと、iOS 版（Issue #99）を足すとき
   /// このコマンドの型ごと分岐が要る（Task 10.2 / Issue #98）。
-  final PreviewAppBuilderContract Function(FluseContext context)
-  builderFactory;
-  final DeviceInstallerContract Function(FluseContext context)
-  installerFactory;
+  final PreviewAppBuilderContract Function(FluseContext context) builderFactory;
+  final DeviceInstallerContract Function(FluseContext context) installerFactory;
 
   /// 利用者への表示。**変わったものの一覧は画面に出す。**
   final void Function(String line) onOutput;

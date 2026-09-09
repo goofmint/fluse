@@ -62,10 +62,8 @@ final class InitCommand implements FluseCommand {
   /// に持つ。** Android の具象（`PreviewAppBuilder` / `DeviceInstaller`）を
   /// 直接持つと、iOS 版（Issue #99）を足すときにこのコマンドの型ごと
   /// 分岐が要る（Task 10.2 / Issue #98）。
-  final PreviewAppBuilderContract Function(FluseContext context)
-  builderFactory;
-  final DeviceInstallerContract Function(FluseContext context)
-  installerFactory;
+  final PreviewAppBuilderContract Function(FluseContext context) builderFactory;
+  final DeviceInstallerContract Function(FluseContext context) installerFactory;
 
   @override
   String get name => 'init';

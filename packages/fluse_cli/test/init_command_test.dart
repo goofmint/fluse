@@ -45,10 +45,9 @@ void main() {
     keystoreManager: KeystoreManager(processManager: steps, isWindows: false),
     pubGetRunnerFactory: (FluseContext c) =>
         PubGetRunner(sdk: c.sdk, processManager: steps),
-    builderFactory: (FluseContext c) =>
-        AndroidPreviewAppBuilder(
-          PreviewAppBuilder(sdk: c.sdk, processManager: steps),
-        ),
+    builderFactory: (FluseContext c) => AndroidPreviewAppBuilder(
+      PreviewAppBuilder(sdk: c.sdk, processManager: steps),
+    ),
     installerFactory: (FluseContext c) => AndroidDeviceInstaller(
       DeviceInstaller(
         processManager: steps,

@@ -29,8 +29,7 @@ final class DevicesCommand implements FluseCommand {
   /// **契約（`DeviceInstallerContract`）越しに持つ。** Android の具象を
   /// 直接持つと、iOS 版（Issue #99）を足すときこのコマンドの型ごと分岐が
   /// 要る（Task 10.2 / Issue #98）。
-  final DeviceInstallerContract Function(FluseContext context)
-  installerFactory;
+  final DeviceInstallerContract Function(FluseContext context) installerFactory;
 
   /// 利用者への表示。
   final void Function(String line) onOutput;
