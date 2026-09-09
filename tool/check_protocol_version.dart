@@ -20,8 +20,7 @@ const _kotlinSource =
     'packages/fluse_runtime/android/src/wire/kotlin/dev/fluse/protocol/ProtocolVersion.kt';
 // Swift のワイヤ実装は最初からプラグイン側（fluse_runtime/ios）に置く
 // （Task 9.1）。Kotlin と違い、後から移した経緯は無い。
-const _swiftSource =
-    'packages/fluse_runtime/ios/Classes/ProtocolVersion.swift';
+const _swiftSource = 'packages/fluse_runtime/ios/Classes/ProtocolVersion.swift';
 const _goldenSource = 'packages/fluse_protocol/test/fixtures/wire_golden.json';
 
 /// `const int fluseProtocolVersion = 1;`
