@@ -65,6 +65,10 @@ final class FluseConfig {
   final String target;
 
   /// 署名がぶつかった時に付ける接尾辞（設計 §5.3）。無ければ null。
+  ///
+  /// **Android 専用。** applicationId は Android の概念で、iOS には対応する
+  /// ものが無い（bundle identifier は Xcode 側の設定に属する）。
+  /// [platform] が [FluseTargetPlatform.ios] のときは読まれない。
   final String? applicationIdSuffix;
 
   /// `-D<key>=<value>` に渡す値。
