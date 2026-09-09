@@ -23,12 +23,14 @@ import os.log
  * ここで足すとスレッドの飛び方が変わり、パリティが崩れる。呼び出し側
  * （UI 層）が必要ならメインスレッドへ戻すこと。
  *
- * **OS 依存物はこの PR では実装しない。** `FluseStore`（実ストレージ）・
- * `DeviceIdentity`（ANDROID_ID 相当の端末識別子取得）・
- * `FluseCleartext`（`ws://` の事前許可判定）・プラグインとしての実配線は
- * すべて後続チケットの対象。ここでは `FluseConnectionStore` /
- * `FluseDeviceInfo` という差し込み口だけを用意し、呼び出し側が組み立てた
- * 値を渡す形にしてある。
+ * **OS 依存物のうち、プラグインとしての実配線だけはこの PR の対象外。**
+ * 実ストレージ（`FluseKeychainStore`）・端末識別子の計算
+ * （`FluseDeviceIdentity`）・ATS 事前/受動判定（`FluseATSCheck`）は
+ * Task 9.7（Issue #95）で用意した。`UIApplicationDelegate` からの実配線や
+ * `FluseDeviceInfo` の組み立て（`identifierForVendor` を実際に読んで
+ * `FluseConnection.getOrCreate` に渡すところ）は依然として後続チケットの
+ * 対象で、`FluseConnectionStore` / `FluseDeviceInfo` という差し込み口を
+ * 呼び出し側が組み立てた値で満たす形は変えていない。
  */
 public final class FluseConnection {
     // ---------------------------------------------------------- シングルトン
@@ -89,6 +91,15 @@ public final class FluseConnection {
     private let scheduler: RetryScheduler
     private let backoff: FluseBackoff
 
+    /**
+     * ATS の事前判定（設計 §10-4）。
+     *
+     * **既定は `FluseATSCheck.isLocalNetworkingAllowed()` そのもの。**
+     * テストでは実際の `Bundle.main` の Info.plist に依存したくないため、
+     * ここへ差し込めるようにしてある（`socketFactory` 等と同じ DI の形）。
+     */
+    private let atsLocalNetworkingAllowed: () -> Bool
+
     /// テストからは直接この初期化子を使ってフェイクを差し込む
     /// （Kotlin 版の `internal constructor` に相当）。
     init(
@@ -97,7 +108,8 @@ public final class FluseConnection {
         appInfo: FluseAppInfo,
         socketFactory: FluseSocketFactory = URLSessionFluseSocketFactory(),
         scheduler: RetryScheduler = FluseConnection.defaultScheduler,
-        backoff: FluseBackoff = FluseBackoff()
+        backoff: FluseBackoff = FluseBackoff(),
+        atsLocalNetworkingAllowed: @escaping () -> Bool = { FluseATSCheck.isLocalNetworkingAllowed() }
     ) {
         self.store = store
         self.device = device
@@ -105,6 +117,7 @@ public final class FluseConnection {
         self.socketFactory = socketFactory
         self.scheduler = scheduler
         self.backoff = backoff
+        self.atsLocalNetworkingAllowed = atsLocalNetworkingAllowed
     }
 
     // ---------------------------------------------------------------- 状態
@@ -215,16 +228,16 @@ public final class FluseConnection {
      * `pairingToken` は QR から来た初回だけ渡す。2回目以降は保存済みの
      * `deviceToken` を使う。
      *
-     * **Kotlin 版にあった `FluseCleartext.isPermitted` の事前チェックは
-     * ここには無い。** Android は `NetworkSecurityPolicy` で `ws://` の
-     * 可否を事前に尋ねられるが、iOS の ATS（App Transport Security）には
-     * 対応する事前問い合わせ API が無く、実際に繋ぎに行って初めて
-     * `URLError` として失敗が分かる（受動判定）。この判定は設計 §10-4 の
-     * 後続チケットの対象とし、ここでは行わない。塞がれている場合も
-     * 特別扱いせず、他の接続失敗と同じく `onDisconnected` の経路で
-     * バックオフ再接続に入る。`FluseConnectionListener.onCleartextBlocked`
-     * は Kotlin とインターフェースの形だけ揃えてあるが、この PR では
-     * どこからも呼ばれない。
+     * **Kotlin 版の `FluseCleartext.isPermitted` とは判定の形が違う
+     * （Task 9.7 / Issue #95）。** Android は `NetworkSecurityPolicy` で
+     * `ws://` の可否をホスト単位で事前に尋ねられるが、iOS の ATS には
+     * 対応する事前問い合わせ API が無い。ここでは Info.plist の宣言を見る
+     * `FluseATSCheck.isLocalNetworkingAllowed()` を事前判定として使い、
+     * 塞がれていそうなら**接続を止めずに**先に `onCleartextBlocked` で
+     * 知らせる（宣言だけでは断定できないため、Android のように接続自体を
+     * 諦めさせることはしない）。実際に ATS が拒んだかどうかの確信は
+     * 接続失敗時の `URLError` -1022 を見る受動判定
+     * （`Events.onFailure` → `handleATSFailure`）の方に委ねる。
      */
     public func connect(endpoint: FluseEndpoint, pairingToken: String? = nil) {
         lock.lock()
@@ -237,6 +250,27 @@ public final class FluseConnection {
         generation += 1
         let target = generation
         lock.unlock()
+
+        if !atsLocalNetworkingAllowed() {
+            // **繋ぐのを諦めない。** 宣言が無くても、独自の ATS 例外設定
+            // 次第では実際には通ることがある（Android の
+            // `networkSecurityConfig` に相当する話）。早めに知らせるだけで、
+            // 判断は受動判定（実際の接続結果）に委ねる。
+            os_log(
+                "ATS の設定を確認できません（%{public}@）: %{public}@",
+                log: FluseRuntimeCore.log,
+                type: .default,
+                endpoint.host,
+                FluseATSCheck.likelyBlockedMessage(host: endpoint.host)
+            )
+            notifyListeners {
+                $0.onCleartextBlocked(
+                    host: endpoint.host,
+                    message: FluseATSCheck.likelyBlockedMessage(host: endpoint.host)
+                )
+            }
+        }
+
         openSocket(forGeneration: target)
     }
 
@@ -495,6 +529,29 @@ public final class FluseConnection {
     }
 
     /**
+     * ATS の受動判定（設計 §10-4 / Task 9.7）。
+     *
+     * `Events.onFailure` から、失敗の理由が `URLError` -1022
+     * （ATS が平文接続を拒んだ）だったときだけ呼ばれる。**通常の切断処理
+     * （`onDisconnected` によるバックオフ再接続）は変えない。** ATS が
+     * 塞いでいる間は再試行しても結果は同じだが、利用者が Info.plist を
+     * 直して再ビルドすれば直る類のエラーであり、Kotlin 版の `onRejected`
+     * （再試行しても解けない）とは違って「繋ぎ直しを止める」判断まではしない
+     * （設定の反映にはアプリの再ビルドが要り、実行中に直るものではないため
+     * 止めても再開しても実害は同じ。誤って恒久的に止めてしまう方が危険）。
+     */
+    private func handleATSFailure(_ error: Error, forGeneration: Int) {
+        lock.lock()
+        let host = generation == forGeneration ? endpoint?.host : nil
+        lock.unlock()
+        guard let host = host else { return }
+
+        let message = FluseATSCheck.blockedMessage(host: host)
+        os_log("ATS に拒否されました（%{public}@）: %{public}@", log: FluseRuntimeCore.log, type: .error, host, message)
+        notifyListeners { $0.onCleartextBlocked(host: host, message: message) }
+    }
+
+    /**
      * 1本のソケットから来る出来事。
      *
      * 開いた世代を持たせてある。後から届いた古い世代の通知は捨てる。
@@ -570,6 +627,11 @@ public final class FluseConnection {
                 type: .default,
                 String(describing: error)
             )
+            // **ATS 由来の失敗だけ特別扱いする。** それ以外の失敗
+            // （サーバ未起動、ネットワーク断等）は通常の切断処理に委ねる。
+            if FluseATSCheck.isATSFailure(error) {
+                connection?.handleATSFailure(error, forGeneration: forGeneration)
+            }
             connection?.onDisconnected(forGeneration: forGeneration)
         }
 
@@ -664,11 +726,13 @@ public protocol FluseConnectionListener: AnyObject {
     func onDisconnected()
 
     /**
-     * 端末の設定で `ws://` が塞がれている（設計 §10-4）。
+     * ATS（App Transport Security）に `ws://` が塞がれている（設計 §10-4）。
      *
-     * **この PR ではどこからも呼ばれない。** `FluseCleartext` 相当の事前
-     * 判定を実装していないため（`FluseConnection.connect` のコメント参照）。
-     * インターフェースの形だけ Kotlin と揃えてあり、既定では何もしない。
+     * Task 9.7（Issue #95）で配線した。`connect()` からは Info.plist の
+     * 宣言による事前判定で（塞がれていそうというだけで接続は続ける）、
+     * `Events.onFailure` からは `URLError` -1022 による受動判定
+     * （確度が高い）で呼ばれる。既定の実装（下の extension）は何もしない
+     * ため、拾いたいリスナーだけ override すればよい。
      */
     func onCleartextBlocked(host: String, message: String)
 
